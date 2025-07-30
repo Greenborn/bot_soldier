@@ -4,11 +4,13 @@
 Cliente Node.js con Express que se conecta a un servidor WebSocket y mantiene la conexión activa.
 
 ## Configuración
-1. Crea un archivo `.env` con el siguiente contenido (ajusta la URL y el puerto si es necesario):
+
+1. Crea un archivo `.env` con el siguiente contenido (ajusta la URL, el puerto y el intervalo si es necesario):
 
 ```
 WS_SERVER_URL=ws://localhost:8080
 PORT=3000
+RECONNECT_INTERVAL=5000  # Intervalo de reintento en milisegundos
 ```
 
 2. Instala las dependencias:
