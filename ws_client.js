@@ -8,6 +8,7 @@ const yauzl = require('yauzl');
 const app = express();
 const PORT = process.env.PORT || 3000;
 const WS_SERVER_URL = process.env.WS_SERVER_URL || 'ws://localhost:8080';
+const WS_LOCAL_PORT = parseInt(process.env.WS_LOCAL_PORT, 10) || 8081;
 const RECONNECT_INTERVAL = parseInt(process.env.RECONNECT_INTERVAL, 10) || 5000; // ms
 const DOWNLOADS_DIR = path.resolve(process.env.DOWNLOADS_DIR || './descargas');
 
@@ -120,12 +121,28 @@ async function handleMessage(data) {
     switch (message.type) {
       case 'bots':
         console.log('Lista de bots recibida:', message.data);
+        
+        // Notificar a clientes locales
+        broadcastToLocalClients({
+          type: 'coordinator_message',
+          original_type: 'bots',
+          data: message.data,
+          timestamp: new Date().toISOString()
+        });
         break;
         
       case 'unzip':
         console.log('Comando de extracción recibido:', {
           filename: message.filename,
           extractTo: message.extractTo || 'raiz'
+        });
+        
+        // Notificar a clientes locales del inicio de extracción
+        broadcastToLocalClients({
+          type: 'extraction_started',
+          filename: message.filename,
+          extractTo: message.extractTo || 'raiz',
+          timestamp: new Date().toISOString()
         });
         
         try {
@@ -146,6 +163,16 @@ async function handleMessage(data) {
             console.log('Respuesta de extracción enviada:', response);
           }
           
+          // Notificar a clientes locales del éxito
+          broadcastToLocalClients({
+            type: 'extraction_completed',
+            success: true,
+            filename: message.filename,
+            extractedTo: result.extractedTo,
+            files: result.files,
+            timestamp: new Date().toISOString()
+          });
+          
         } catch (error) {
           console.error('Error en extracción:', error.message);
           
@@ -161,11 +188,27 @@ async function handleMessage(data) {
             ws.send(JSON.stringify(errorResponse));
             console.log('Respuesta de error enviada:', errorResponse);
           }
+          
+          // Notificar a clientes locales del error
+          broadcastToLocalClients({
+            type: 'extraction_failed',
+            success: false,
+            filename: message.filename,
+            error: error.message,
+            timestamp: new Date().toISOString()
+          });
         }
         break;
         
       default:
         console.log('Tipo de mensaje no reconocido:', message.type);
+        
+        // Notificar a clientes locales de mensaje desconocido
+        broadcastToLocalClients({
+          type: 'unknown_message',
+          original_message: message,
+          timestamp: new Date().toISOString()
+        });
     }
     
   } catch (parseError) {
@@ -186,8 +229,175 @@ app.listen(PORT, () => {
 // Inicializar directorio de descargas
 ensureDownloadsDir();
 
+// ================================================================
+// SERVIDOR WEBSOCKET LOCAL
+// ================================================================
+// Servidor WebSocket local para recibir conexiones directas
+const localWsServer = new WebSocket.Server({ port: WS_LOCAL_PORT });
+const localClients = new Set();
 
+console.log(`Servidor WebSocket local iniciado en puerto: ${WS_LOCAL_PORT}`);
 
+localWsServer.on('connection', (localWs, request) => {
+  const clientId = `client_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  localClients.add(localWs);
+  
+  console.log(`Nueva conexión local establecida: ${clientId} desde ${request.socket.remoteAddress}`);
+  
+  // Enviar mensaje de bienvenida al cliente local
+  const welcomeMessage = {
+    type: 'welcome',
+    message: 'Conectado al Bot Soldier',
+    bot: 'soldier',
+    clientId: clientId,
+    timestamp: new Date().toISOString(),
+    status: {
+      connected_to_coordinator: isConnected,
+      downloads_dir: DOWNLOADS_DIR,
+      local_clients: localClients.size
+    }
+  };
+  
+  localWs.send(JSON.stringify(welcomeMessage));
+  
+  // Manejar mensajes de clientes locales
+  localWs.on('message', (data) => {
+    try {
+      const message = JSON.parse(data.toString());
+      console.log(`Mensaje de cliente local ${clientId}:`, message);
+      
+      switch (message.type) {
+        case 'ping':
+          localWs.send(JSON.stringify({
+            type: 'pong',
+            timestamp: new Date().toISOString(),
+            clientId: clientId
+          }));
+          break;
+          
+        case 'status':
+          localWs.send(JSON.stringify({
+            type: 'status_response',
+            bot: 'soldier',
+            connected_to_coordinator: isConnected,
+            last_welcome: lastWelcome,
+            coordinator_url: WS_SERVER_URL,
+            downloads_dir: DOWNLOADS_DIR,
+            local_clients_count: localClients.size,
+            timestamp: new Date().toISOString()
+          }));
+          break;
+          
+        case 'list_downloads':
+          // Listar archivos descargados
+          fs.readdir(DOWNLOADS_DIR, { withFileTypes: true })
+            .then(async (files) => {
+              const fileList = await Promise.all(
+                files.map(async (file) => {
+                  const filePath = path.join(DOWNLOADS_DIR, file.name);
+                  const stats = await fs.stat(filePath);
+                  return {
+                    name: file.name,
+                    type: file.isDirectory() ? 'directory' : 'file',
+                    size: stats.size,
+                    modified: stats.mtime
+                  };
+                })
+              );
+              
+              localWs.send(JSON.stringify({
+                type: 'downloads_list',
+                downloads_directory: DOWNLOADS_DIR,
+                files: fileList,
+                timestamp: new Date().toISOString()
+              }));
+            })
+            .catch((error) => {
+              localWs.send(JSON.stringify({
+                type: 'error',
+                message: 'Error al listar descargas',
+                error: error.message,
+                timestamp: new Date().toISOString()
+              }));
+            });
+          break;
+          
+        case 'forward_to_coordinator':
+          // Reenviar mensaje al coordinador si está conectado
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            const forwardMessage = {
+              ...message.payload,
+              forwarded_from: clientId,
+              forwarded_by: 'soldier'
+            };
+            ws.send(JSON.stringify(forwardMessage));
+            console.log('Mensaje reenviado al coordinador:', forwardMessage);
+            
+            localWs.send(JSON.stringify({
+              type: 'forward_result',
+              success: true,
+              message: 'Mensaje enviado al coordinador',
+              timestamp: new Date().toISOString()
+            }));
+          } else {
+            localWs.send(JSON.stringify({
+              type: 'forward_result',
+              success: false,
+              message: 'No hay conexión con el coordinador',
+              timestamp: new Date().toISOString()
+            }));
+          }
+          break;
+          
+        default:
+          localWs.send(JSON.stringify({
+            type: 'error',
+            message: 'Tipo de mensaje no reconocido',
+            received_type: message.type,
+            timestamp: new Date().toISOString()
+          }));
+      }
+    } catch (error) {
+      console.error(`Error procesando mensaje de cliente ${clientId}:`, error.message);
+      localWs.send(JSON.stringify({
+        type: 'error',
+        message: 'Error al procesar mensaje',
+        error: error.message,
+        timestamp: new Date().toISOString()
+      }));
+    }
+  });
+  
+  // Manejar desconexión de cliente local
+  localWs.on('close', () => {
+    localClients.delete(localWs);
+    console.log(`Cliente local desconectado: ${clientId}. Clientes restantes: ${localClients.size}`);
+  });
+  
+  localWs.on('error', (error) => {
+    console.error(`Error en cliente local ${clientId}:`, error.message);
+    localClients.delete(localWs);
+  });
+});
+
+// Función para enviar mensaje a todos los clientes locales
+function broadcastToLocalClients(message) {
+  const messageStr = JSON.stringify(message);
+  localClients.forEach((client) => {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(messageStr);
+    }
+  });
+}
+
+// Manejar errores del servidor WebSocket local
+localWsServer.on('error', (error) => {
+  console.error('Error en servidor WebSocket local:', error.message);
+});
+
+// ================================================================
+// CLIENTE WEBSOCKET (CONEXIÓN AL COORDINADOR)
+// ================================================================
 
 let isConnected = false;
 let lastWelcome = null;
@@ -201,21 +411,48 @@ function connectWS() {
     isConnected = true;
     lastWelcome = new Date();
     console.log('Conectado al servidor WebSocket:', WS_SERVER_URL);
+    
     // Enviar mensaje de bienvenida
     const welcomeMsg = JSON.stringify({ type: 'welcome', bot: 'soldier', timestamp: lastWelcome });
     ws.send(welcomeMsg);
     console.log('Mensaje de bienvenida enviado:', welcomeMsg);
+    
+    // Notificar a clientes locales de la conexión
+    broadcastToLocalClients({
+      type: 'coordinator_connected',
+      message: 'Conectado al servidor coordinador',
+      coordinator_url: WS_SERVER_URL,
+      timestamp: new Date().toISOString()
+    });
   });
 
   ws.on('close', () => {
     isConnected = false;
     console.log('Conexión WebSocket cerrada. Reintentando en', RECONNECT_INTERVAL, 'ms');
+    
+    // Notificar a clientes locales de la desconexión
+    broadcastToLocalClients({
+      type: 'coordinator_disconnected',
+      message: 'Conexión con coordinador perdida',
+      reconnect_in: RECONNECT_INTERVAL,
+      timestamp: new Date().toISOString()
+    });
+    
     scheduleReconnect();
   });
 
   ws.on('error', (err) => {
     isConnected = false;
     console.error('Error en WebSocket:', err);
+    
+    // Notificar a clientes locales del error
+    broadcastToLocalClients({
+      type: 'coordinator_error',
+      message: 'Error en conexión con coordinador',
+      error: err.message,
+      timestamp: new Date().toISOString()
+    });
+    
     if (ws.readyState !== WebSocket.OPEN) {
       scheduleReconnect();
     }
@@ -243,7 +480,12 @@ app.get('/status', (req, res) => {
     connected: isConnected,
     lastWelcome: lastWelcome,
     ws_server: WS_SERVER_URL,
-    downloads_dir: DOWNLOADS_DIR
+    downloads_dir: DOWNLOADS_DIR,
+    local_websocket: {
+      port: WS_LOCAL_PORT,
+      connected_clients: localClients.size,
+      server_running: localWsServer.readyState === 1
+    }
   });
 });
 
