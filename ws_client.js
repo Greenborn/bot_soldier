@@ -9,6 +9,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const WS_SERVER_URL = process.env.WS_SERVER_URL || 'ws://localhost:8080';
 const WS_LOCAL_PORT = parseInt(process.env.WS_LOCAL_PORT, 10) || 8081;
+const BOT_NAME = process.env.BOT_NAME || 'soldier';
 const RECONNECT_INTERVAL = parseInt(process.env.RECONNECT_INTERVAL, 10) || 5000; // ms
 const DOWNLOADS_DIR = path.resolve(process.env.DOWNLOADS_DIR || './descargas');
 
@@ -126,7 +127,7 @@ async function handleMessage(data) {
         const identifyResponse = {
           type: 'identify',
           clientType: 'bot',
-          botName: 'soldier'
+          botName: BOT_NAME
         };
         
         if (ws && ws.readyState === WebSocket.OPEN) {
@@ -138,7 +139,7 @@ async function handleMessage(data) {
         broadcastToLocalClients({
           type: 'identification_sent',
           clientType: 'bot',
-          botName: 'soldier',
+          botName: BOT_NAME,
           timestamp: new Date().toISOString()
         });
         break;
@@ -282,8 +283,8 @@ localWsServer.on('connection', (localWs, request) => {
   // Enviar mensaje de bienvenida al cliente local
   const welcomeMessage = {
     type: 'welcome',
-    message: 'Conectado al Bot Soldier',
-    bot: 'soldier',
+    message: `Conectado al Bot ${BOT_NAME}`,
+    bot: BOT_NAME,
     clientId: clientId,
     timestamp: new Date().toISOString(),
     status: {
@@ -313,7 +314,7 @@ localWsServer.on('connection', (localWs, request) => {
         case 'status':
           localWs.send(JSON.stringify({
             type: 'status_response',
-            bot: 'soldier',
+            bot: BOT_NAME,
             connected_to_coordinator: isConnected,
             last_welcome: lastWelcome,
             coordinator_url: WS_SERVER_URL,
@@ -363,7 +364,7 @@ localWsServer.on('connection', (localWs, request) => {
             const forwardMessage = {
               ...message.payload,
               forwarded_from: clientId,
-              forwarded_by: 'soldier'
+              forwarded_by: BOT_NAME
             };
             ws.send(JSON.stringify(forwardMessage));
             console.log('Mensaje reenviado al coordinador:', forwardMessage);
@@ -448,7 +449,7 @@ function connectWS() {
     console.log('Conectado al servidor WebSocket:', WS_SERVER_URL);
     
     // Enviar mensaje de bienvenida
-    const welcomeMsg = JSON.stringify({ type: 'welcome', bot: 'soldier', timestamp: lastWelcome });
+    const welcomeMsg = JSON.stringify({ type: 'welcome', bot: BOT_NAME, timestamp: lastWelcome });
     ws.send(welcomeMsg);
     console.log('Mensaje de bienvenida enviado:', welcomeMsg);
     
@@ -511,7 +512,7 @@ connectWS();
 // Endpoint para panel de control: estado del bot soldier
 app.get('/status', (req, res) => {
   res.json({
-    bot: 'soldier',
+    bot: BOT_NAME,
     connected: isConnected,
     lastWelcome: lastWelcome,
     ws_server: WS_SERVER_URL,

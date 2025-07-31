@@ -40,6 +40,9 @@ O crea el archivo `.env` manualmente con el siguiente contenido:
 # URL del servidor WebSocket
 WS_SERVER_URL=ws://localhost:8080
 
+# Nombre del bot
+BOT_NAME=soldier
+
 # Puerto del servidor Express local
 PORT=3000
 
@@ -98,6 +101,8 @@ El bot automáticamente:
 }
 ```
 
+**Nota**: El valor de `"bot"` cambiará según la variable `BOT_NAME` configurada.
+
 #### Ejemplo de respuesta `/downloads`:
 ```json
 {
@@ -126,6 +131,7 @@ El bot automáticamente:
 | Variable | Tipo | Por defecto | Descripción |
 |----------|------|-------------|-------------|
 | `WS_SERVER_URL` | string | `ws://localhost:8080` | URL del servidor WebSocket coordinador |
+| `BOT_NAME` | string | `soldier` | Nombre identificativo del bot |
 | `PORT` | number | `3000` | Puerto del servidor Express (HTTP) |
 | `WS_LOCAL_PORT` | number | `8081` | Puerto del servidor WebSocket local |
 | `RECONNECT_INTERVAL` | number | `5000` | Intervalo de reconexión (ms) |
@@ -143,6 +149,20 @@ El directorio de descargas se puede configurar de las siguientes formas:
 - El directorio se creará automáticamente si no existe
 - Para rutas absolutas, asegúrate de que tengas permisos de escritura
 - Para rutas relativas, serán resueltas desde el directorio del proyecto
+
+### Configuración del nombre del bot
+
+El nombre del bot se define con la variable `BOT_NAME`:
+
+- **Formato recomendado**: Solo letras, números y guiones bajos
+- **Ejemplos válidos**: `soldier`, `worker_01`, `guardian`, `scout_alpha`
+- **Uso**: Se envía al coordinador para identificación y aparece en logs
+- **Unicidad**: Cada instancia debería tener un nombre único
+
+**Casos de uso**:
+- **Desarrollo**: `soldier`, `worker`, `scout`
+- **Producción**: `soldier_prod_01`, `worker_east_02`
+- **Testing**: `test_soldier`, `dev_worker`
 
 ### Configuración del servidor WebSocket local
 
@@ -163,6 +183,7 @@ const ws = new WebSocket('ws://localhost:8081');
 #### Desarrollo local
 ```env
 WS_SERVER_URL=ws://localhost:8080
+BOT_NAME=soldier
 PORT=3000
 WS_LOCAL_PORT=8081
 RECONNECT_INTERVAL=5000
@@ -172,6 +193,7 @@ DOWNLOADS_DIR=./descargas
 #### Producción
 ```env
 WS_SERVER_URL=wss://mi-servidor.com:8080
+BOT_NAME=soldier_prod_01
 PORT=8000
 WS_LOCAL_PORT=8082
 RECONNECT_INTERVAL=10000
@@ -181,6 +203,7 @@ DOWNLOADS_DIR=/var/app/downloads
 #### Configuración personalizada
 ```env
 WS_SERVER_URL=ws://192.168.1.100:8080
+BOT_NAME=guardian
 PORT=4000
 WS_LOCAL_PORT=9001
 RECONNECT_INTERVAL=3000
