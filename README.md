@@ -202,7 +202,50 @@ Se envía automáticamente al establecer la conexión:
 }
 ```
 
+#### Respuesta de identificación (`identify`)
+Se envía cuando el coordinador solicita identificación:
+
+```json
+{
+  "type": "identify",
+  "clientType": "bot",
+  "botName": "soldier"
+}
+```
+
 ### Mensajes recibidos del servidor coordinador
+
+#### Solicitud de identificación (`identify_request`)
+El servidor solicita que el bot se identifique:
+
+```json
+{
+  "type": "identify_request",
+  "message": "Por favor identifícate como 'bot' o 'panel'",
+  "clientId": "17539535398356bza8jrii"
+}
+```
+
+**Respuesta automática del bot**:
+El bot responde automáticamente con:
+
+```json
+{
+  "type": "identify",
+  "clientType": "bot",
+  "botName": "soldier"
+}
+```
+
+#### Mensaje de bienvenida del coordinador (`welcome`)
+Después de la identificación exitosa, el coordinador envía:
+
+```json
+{
+  "type": "welcome",
+  "message": "¡Bienvenido, soldier!"
+}
+```
 
 #### Lista de bots disponibles (`bots`)
 El servidor puede enviar la lista de bots conectados:

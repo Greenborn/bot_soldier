@@ -119,6 +119,41 @@ async function handleMessage(data) {
     console.log('Mensaje recibido del servidor:', message);
     
     switch (message.type) {
+      case 'identify_request':
+        console.log('Solicitud de identificación recibida');
+        
+        // Responder identificándose como bot con el formato correcto
+        const identifyResponse = {
+          type: 'identify',
+          clientType: 'bot',
+          botName: 'soldier'
+        };
+        
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify(identifyResponse));
+          console.log('Identificación enviada:', identifyResponse);
+        }
+        
+        // Notificar a clientes locales
+        broadcastToLocalClients({
+          type: 'identification_sent',
+          clientType: 'bot',
+          botName: 'soldier',
+          timestamp: new Date().toISOString()
+        });
+        break;
+        
+      case 'welcome':
+        console.log('Mensaje de bienvenida del coordinador:', message.message);
+        
+        // Notificar a clientes locales
+        broadcastToLocalClients({
+          type: 'coordinator_welcome',
+          message: message.message,
+          timestamp: new Date().toISOString()
+        });
+        break;
+        
       case 'bots':
         console.log('Lista de bots recibida:', message.data);
         
