@@ -11,6 +11,7 @@ const WS_SERVER_URL = process.env.WS_SERVER_URL || 'ws://localhost:8080';
 const WS_LOCAL_PORT = parseInt(process.env.WS_LOCAL_PORT, 10) || 8081;
 const BOT_NAME = process.env.BOT_NAME || 'soldier';
 const RECONNECT_INTERVAL = parseInt(process.env.RECONNECT_INTERVAL, 10) || 5000; // ms
+const HEARTBEAT_INTERVAL = parseInt(process.env.HEARTBEAT_INTERVAL, 10) || 30000; // 30s por defecto
 const DOWNLOADS_DIR = path.resolve(process.env.DOWNLOADS_DIR || './descargas');
 
 console.log('Conectando a WebSocket en:', WS_SERVER_URL);
@@ -144,6 +145,11 @@ async function handleMessage(data) {
         });
         break;
         
+      case 'heartbeat_ack':
+        console.log('Heartbeat confirmado por el servidor');
+        // El servidor confirmó el heartbeat - opcional logging
+        break;
+        
       case 'welcome':
         console.log('Mensaje de bienvenida del coordinador:', message.message);
         
@@ -173,6 +179,10 @@ async function handleMessage(data) {
           extractTo: message.extractTo || 'raiz'
         });
         
+        // Cambiar estado del bot a trabajando
+        botState = 'working';
+        currentAction = 'unzip';
+        
         // Notificar a clientes locales del inicio de extracción
         broadcastToLocalClients({
           type: 'extraction_started',
@@ -187,6 +197,10 @@ async function handleMessage(data) {
             message.filename,
             message.extractTo || ''
           );
+          
+          // Cambiar estado del bot de vuelta a idle
+          botState = 'idle';
+          currentAction = null;
           
           // Enviar respuesta de éxito
           const response = {
@@ -211,6 +225,14 @@ async function handleMessage(data) {
           
         } catch (error) {
           console.error('Error en extracción:', error.message);
+          
+          // Cambiar estado del bot a error temporalmente, luego a idle
+          botState = 'error';
+          currentAction = null;
+          
+          setTimeout(() => {
+            botState = 'idle';
+          }, 5000); // Volver a idle después de 5 segundos
           
           // Enviar respuesta de error
           const errorResponse = {
@@ -439,6 +461,49 @@ let isConnected = false;
 let lastWelcome = null;
 let ws = null;
 let reconnectTimeout = null;
+let heartbeatInterval = null;
+let botState = 'idle'; // idle, working, error, maintenance, offline
+let currentAction = null;
+let actionsQueued = 0;
+
+// Función para enviar heartbeat según el protocolo
+function sendHeartbeat() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  
+  const heartbeatMessage = {
+    type: 'heartbeat',
+    timestamp: Date.now(),
+    status: {
+      state: botState,
+      currentAction: currentAction,
+      actionsQueued: actionsQueued,
+      systemInfo: {
+        cpu: Math.round(Math.random() * 100), // Placeholder - aquí iría el uso real de CPU
+        memory: Math.round(Math.random() * 100), // Placeholder - aquí iría el uso real de memoria
+        uptime: process.uptime() * 1000 // tiempo activo en ms
+      }
+    }
+  };
+  
+  ws.send(JSON.stringify(heartbeatMessage));
+  console.log('Heartbeat enviado:', heartbeatMessage);
+}
+
+// Función para iniciar el heartbeat automático
+function startHeartbeat() {
+  if (heartbeatInterval) clearInterval(heartbeatInterval);
+  heartbeatInterval = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL);
+  console.log(`Heartbeat iniciado cada ${HEARTBEAT_INTERVAL}ms`);
+}
+
+// Función para detener el heartbeat
+function stopHeartbeat() {
+  if (heartbeatInterval) {
+    clearInterval(heartbeatInterval);
+    heartbeatInterval = null;
+    console.log('Heartbeat detenido');
+  }
+}
 
 function connectWS() {
   ws = new WebSocket(WS_SERVER_URL);
@@ -446,12 +511,11 @@ function connectWS() {
   ws.on('open', () => {
     isConnected = true;
     lastWelcome = new Date();
+    botState = 'idle';
     console.log('Conectado al servidor WebSocket:', WS_SERVER_URL);
     
-    // Enviar mensaje de bienvenida
-    const welcomeMsg = JSON.stringify({ type: 'welcome', bot: BOT_NAME, timestamp: lastWelcome });
-    ws.send(welcomeMsg);
-    console.log('Mensaje de bienvenida enviado:', welcomeMsg);
+    // Iniciar heartbeat automático según el protocolo
+    startHeartbeat();
     
     // Notificar a clientes locales de la conexión
     broadcastToLocalClients({
@@ -464,7 +528,11 @@ function connectWS() {
 
   ws.on('close', () => {
     isConnected = false;
+    botState = 'offline';
     console.log('Conexión WebSocket cerrada. Reintentando en', RECONNECT_INTERVAL, 'ms');
+    
+    // Detener heartbeat
+    stopHeartbeat();
     
     // Notificar a clientes locales de la desconexión
     broadcastToLocalClients({
@@ -479,7 +547,11 @@ function connectWS() {
 
   ws.on('error', (err) => {
     isConnected = false;
+    botState = 'error';
     console.error('Error en WebSocket:', err);
+    
+    // Detener heartbeat
+    stopHeartbeat();
     
     // Notificar a clientes locales del error
     broadcastToLocalClients({
@@ -517,6 +589,12 @@ app.get('/status', (req, res) => {
     lastWelcome: lastWelcome,
     ws_server: WS_SERVER_URL,
     downloads_dir: DOWNLOADS_DIR,
+    bot_status: {
+      state: botState,
+      currentAction: currentAction,
+      actionsQueued: actionsQueued,
+      uptime: process.uptime() * 1000
+    },
     local_websocket: {
       port: WS_LOCAL_PORT,
       connected_clients: localClients.size,

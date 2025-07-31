@@ -1,7 +1,41 @@
 # 🤖 Bot Soldier - WebSocket Client
 
 ## 📋 Descripción
-Bot Soldier es un cliente Node.js robusto que se conecta a un servidor WebSocket y mantiene una conexió## 📡 Protocolo de Comunicación persistente con reconexión automática. Inclu```
+Bot Soldier es un cliente Node.js r#### Ejemplo de respuesta `/status`:
+```json
+{
+  "bot": "soldier",
+  "connected": true,
+  "lastWelcome": "2025-07-31T10:30:00.000Z",
+  "ws_server": "ws://localhost:8080",
+  "downloads_dir": "/absolute/path/to/descargas",
+  "bot_status": {
+    "state": "idle",
+    "currentAction": null,
+    "actionsQueued": 0,
+    "uptime": 86400000
+  },
+  "local_websocket": {
+    "port": 8081,
+    "connected_clients": 2,
+    "server_running": true
+  }
+}
+```
+
+**Nota**: El valor de `"bot"` cambiará según la variable `BOT_NAME` configurada.
+
+## 📡 Protocolo de Comunicación
+
+Para información detallada sobre el protocolo WebSocket utilizado por Bot Commander, consultar el archivo [`PROTOCOL.md`](PROTOCOL.md).
+
+El bot soldier implementa:
+- ✅ **Identificación automática** como bot
+- ✅ **Heartbeat periódico** con información de estado
+- ✅ **Comandos de extracción** de archivos ZIP
+- ✅ **Servidor WebSocket local** para conexiones directas
+
+## 📊 Monitoreoecta a un servidor WebSocket y mantiene una conexió## 📡 Protocolo de Comunicación persistente con reconexión automática. Inclu```
 
 ## 📊 Monitoreo
 
@@ -51,6 +85,9 @@ WS_LOCAL_PORT=8081
 
 # Intervalo de reconexión en milisegundos
 RECONNECT_INTERVAL=5000
+
+# Intervalo de heartbeat en milisegundos
+HEARTBEAT_INTERVAL=30000
 
 # Directorio de descargas (relativo o absoluto)
 DOWNLOADS_DIR=./descargas
@@ -135,6 +172,7 @@ El bot automáticamente:
 | `PORT` | number | `3000` | Puerto del servidor Express (HTTP) |
 | `WS_LOCAL_PORT` | number | `8081` | Puerto del servidor WebSocket local |
 | `RECONNECT_INTERVAL` | number | `5000` | Intervalo de reconexión (ms) |
+| `HEARTBEAT_INTERVAL` | number | `30000` | Intervalo de heartbeat (ms) |
 | `DOWNLOADS_DIR` | string | `./descargas` | Directorio para archivos extraídos |
 
 ### Configuración del directorio de descargas
@@ -187,6 +225,7 @@ BOT_NAME=soldier
 PORT=3000
 WS_LOCAL_PORT=8081
 RECONNECT_INTERVAL=5000
+HEARTBEAT_INTERVAL=30000
 DOWNLOADS_DIR=./descargas
 ```
 
@@ -197,6 +236,7 @@ BOT_NAME=soldier_prod_01
 PORT=8000
 WS_LOCAL_PORT=8082
 RECONNECT_INTERVAL=10000
+HEARTBEAT_INTERVAL=30000
 DOWNLOADS_DIR=/var/app/downloads
 ```
 
@@ -207,6 +247,7 @@ BOT_NAME=guardian
 PORT=4000
 WS_LOCAL_PORT=9001
 RECONNECT_INTERVAL=3000
+HEARTBEAT_INTERVAL=15000
 DOWNLOADS_DIR=../shared/extractions
 ```
 
