@@ -1,15 +1,127 @@
-# Protocolo WebSocket - Bot Commander
+# Protocolo WebSocket y API HTTP - Bot Commander
 
-Documentación completa del protocolo de comunicación WebSocket para Bot Commander.
+Documentación completa del protocolo de comunicación WebSocket y endpoints HTTP para Bot Commander.
 
 ## Visión General
 
-Bot Commander utiliza WebSockets para comunicación bidireccional en tiempo real entre:
+Bot Commander utiliza:
+- **WebSockets**: Para comunicación bidireccional en tiempo real entre bots y paneles
+- **HTTP REST API**: Para autenticación y operaciones administrativas
+
+### Componentes
 - **Bots**: Clientes automatizados que ejecutan acciones
 - **Paneles**: Interfaces de usuario para control y monitoreo
 - **Servidor**: Coordinador central de comunicaciones
 
-## Tipos de Mensajes
+## API HTTP Endpoints
+
+### Autenticación
+
+#### POST /api/login
+Autentica un usuario y devuelve un token JWT.
+
+**Request:**
+```json
+{
+  "username": "admin",
+  "password": "contraseña"
+}
+```
+
+**Response (Éxito):**
+```json
+{
+  "success": true,
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "message": "Login exitoso"
+}
+```
+
+**Response (Error):**
+```json
+{
+  "error": "Credenciales inválidas"
+}
+```
+
+**Rate Limiting:**
+- Máximo 5 intentos por IP cada 15 minutos
+- Headers: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`
+
+#### GET /api/verify-token
+Verifica la validez de un token JWT.
+
+**Headers:**
+```
+Authorization: Bearer <jwt_token>
+```
+
+**Response (Válido):**
+```json
+{
+  "valid": true,
+  "username": "admin"
+}
+```
+
+**Response (Inválido):**
+```json
+{
+  "error": "Token inválido"
+}
+```
+
+### Datos del Sistema
+
+#### GET /api/bots
+Obtiene información de bots conectados (requiere autenticación).
+
+**Headers:**
+```
+Authorization: Bearer <jwt_token>
+```
+
+**Response:**
+```json
+{
+  "bots": [
+    {
+      "id": "bot_id_123",
+      "botName": "WebCrawler-01",
+      "connectedAt": 1640995200000,
+      "lastActivity": 1640995500000,
+      "type": "bot"
+    }
+  ],
+  "panels": [
+    {
+      "id": "panel_id_456",
+      "connectedAt": 1640995300000,
+      "type": "panel"
+    }
+  ],
+  "stats": {
+    "totalBots": 1,
+    "totalPanels": 1,
+    "totalClients": 2
+  }
+}
+```
+
+### Códigos de Estado HTTP
+
+| Código | Descripción | Contexto |
+|--------|-------------|----------|
+| `200` | OK | Operación exitosa |
+| `400` | Bad Request | Datos de entrada inválidos |
+| `401` | Unauthorized | Credenciales inválidas o token faltante |
+| `403` | Forbidden | Token inválido o expirado |
+| `429` | Too Many Requests | Rate limit excedido |
+| `500` | Internal Server Error | Error del servidor |
+
+## Tipos de Mensajes WebSocket
+
+Los mensajes WebSocket se intercambian después de la autenticación HTTP inicial.
 
 ### 1. Identificación de Cliente
 
@@ -23,21 +135,59 @@ Bot Commander utiliza WebSockets para comunicación bidireccional en tiempo real
 ```
 
 #### 1.2 Respuesta de Identificación (Cliente → Servidor)
+
+**Para Paneles:**
 ```json
 {
   "type": "identify",
-  "clientType": "bot", // o "panel"
-  "botName": "WebCrawler-01" // solo para bots, opcional
+  "clientType": "panel"
+}
+```
+
+**Para Bots (con autenticación):**
+```json
+{
+  "type": "identify",
+  "clientType": "bot",
+  "username": "WebCrawler01",  // nombre de usuario del bot registrado
+  "apiKey": "bot_webcrawler01_abc123...", // API key generada
+  "botName": "Web Crawler v1.0" // nombre descriptivo opcional
 }
 ```
 
 #### 1.3 Mensaje de Bienvenida (Servidor → Cliente)
+
+**Para Paneles:**
 ```json
 {
   "type": "welcome",
-  "message": "¡Bienvenido, WebCrawler-01!" // o "¡Panel de control conectado!"
+  "message": "¡Panel de control conectado!"
 }
 ```
+
+**Para Bots Autenticados:**
+```json
+{
+  "type": "welcome",
+  "message": "¡Bienvenido, Web Crawler v1.0!",
+  "authenticated": true
+}
+```
+
+#### 1.4 Error de Autenticación (Servidor → Bot)
+```json
+{
+  "type": "error",
+  "code": "INVALID_CREDENTIALS",
+  "message": "Autenticación fallida: API key inválida"
+}
+```
+
+Códigos de error de autenticación:
+- `MISSING_CREDENTIALS`: Falta username o apiKey
+- `INVALID_CREDENTIALS`: Credenciales incorrectas
+- `BOT_NOT_REGISTERED`: Bot no está registrado
+- `BOT_DEACTIVATED`: Bot está desactivado
 
 ### 2. Heartbeat y Estado
 
@@ -251,71 +401,9 @@ Bot Commander utiliza WebSockets para comunicación bidireccional en tiempo real
 }
 ```
 
-### 5. Comandos Directos (Sistema Legacy)
+### 6. Actualizaciones de Estado del Sistema
 
-#### 5.1 Comando Directo (Panel → Bot vía Servidor)
-```json
-{
-  "type": "command",
-  "targetBot": "bot_id_123",
-  "command": "restart",
-  "parameters": {},
-  "from": "panel"
-}
-```
-
-#### 5.2 Resultado de Comando (Bot → Panel vía Servidor)
-```json
-{
-  "type": "command_result",
-  "command": "restart",
-  "result": "Bot reiniciado exitosamente",
-  "success": true,
-  "timestamp": 1640995200000
-}
-```
-
-### 6. Comandos Específicos del Bot
-
-#### 6.1 Extracción de Archivos ZIP (Coordinador → Bot)
-```json
-{
-  "type": "unzip",
-  "filename": "archivo.zip",
-  "base64": "UEsDBBQAAAAIAL+RUkwAAAAA...",
-  "extractTo": "proyecto_001"
-}
-```
-
-**Parámetros:**
-- `filename`: Nombre del archivo ZIP original
-- `base64`: Contenido del archivo ZIP codificado en base64
-- `extractTo`: (Opcional) Subdirectorio donde extraer los archivos
-
-#### 6.2 Resultado de Extracción (Bot → Coordinador)
-```json
-{
-  "type": "unzip_result",
-  "success": true,
-  "message": "Archivo extraído exitosamente",
-  "extractedTo": "/path/to/downloads/proyecto_001",
-  "files": ["file1.txt", "file2.js", "subfolder/file3.json"]
-}
-```
-
-En caso de error:
-```json
-{
-  "type": "unzip_result", 
-  "success": false,
-  "error": "Error al decodificar base64",
-  "message": "El archivo base64 no es válido"
-}
-```
-
-### 7. Actualizaciones de Estado del Sistema
-
-#### 7.1 Actualización de Clientes (Servidor → Paneles)
+#### 6.1 Actualización de Clientes (Servidor → Paneles)
 ```json
 {
   "type": "clients_update",
@@ -346,9 +434,9 @@ En caso de error:
 }
 ```
 
-### 8. Manejo de Errores
+### 7. Manejo de Errores
 
-#### 8.1 Error General (Servidor → Cliente)
+#### 7.1 Error General (Servidor → Cliente)
 ```json
 {
   "type": "error",
@@ -404,23 +492,72 @@ En caso de error:
 ## Mejores Prácticas
 
 ### Para Bots
-1. **Identificación**: Siempre responder al `identify_request` con información precisa
-2. **Heartbeat**: Enviar heartbeat cada 30 segundos con estado actualizado
-3. **Acciones**: Validar parámetros antes de ejecutar acciones
-4. **Estados**: Mantener estado consistente y reportar cambios
-5. **Errores**: Usar códigos de error estándar y proporcionar mensajes descriptivos
+1. **Registro**: Registrarse usando el script de gestión antes de conectar
+2. **Credenciales**: Guardar de forma segura username y API key
+3. **Identificación**: Incluir username y apiKey al conectar
+4. **Heartbeat**: Enviar heartbeat cada 30 segundos con estado actualizado
+5. **Acciones**: Validar parámetros antes de ejecutar acciones
+6. **Estados**: Mantener estado consistente y reportar cambios
+7. **Errores**: Usar códigos de error estándar y proporcionar mensajes descriptivos
 
 ### Para Paneles
-1. **Identificación**: Identificarse como `panel` al conectar
-2. **IDs únicos**: Usar IDs únicos para `requestId` y `actionId`
-3. **Timeouts**: Implementar timeouts para acciones de larga duración
-4. **Manejo de errores**: Manejar todos los tipos de respuesta (éxito, error, timeout)
+1. **Autenticación**: Autenticarse via HTTP antes de usar WebSocket
+2. **Identificación**: Identificarse como `panel` al conectar
+3. **IDs únicos**: Usar IDs únicos para `requestId` y `actionId`
+4. **Timeouts**: Implementar timeouts para acciones de larga duración
+5. **Manejo de errores**: Manejar todos los tipos de respuesta (éxito, error, timeout)
+6. **Token Management**: Renovar tokens antes de que expiren (24h)
 
 ### Para el Servidor
-1. **Routing**: Enrutar mensajes según `targetBot` cuando sea necesario
-2. **Validación**: Validar estructura de mensajes antes de procesar
-3. **Estado**: Mantener estado actualizado de todos los clientes
-4. **Broadcast**: Enviar actualizaciones solo a clientes relevantes
+1. **Autenticación**: Validar tokens JWT para paneles y API keys para bots
+2. **Registro de bots**: Mantener archivo seguro de credenciales de bots
+3. **Routing**: Enrutar mensajes según `targetBot` cuando sea necesario
+4. **Validación**: Validar estructura de mensajes antes de procesar
+5. **Estado**: Mantener estado actualizado de todos los clientes
+6. **Broadcast**: Enviar actualizaciones solo a clientes relevantes
+7. **Rate Limiting**: Aplicar límites de velocidad en endpoints críticos
+8. **Logs de seguridad**: Registrar intentos de autenticación fallidos
+
+## Flujo de Autenticación Completo
+
+### 1. Autenticación del Panel
+```
+1. Panel → POST /api/login (username, password)
+2. Servidor ← 200 OK (token JWT)
+3. Panel guarda token en localStorage
+4. Panel → WebSocket con credentials válidos
+5. Panel ← identify_request
+6. Panel → identify (type: "panel")
+7. Panel ← welcome message
+```
+
+### 2. Conexión de Bot (con autenticación)
+```
+1. Bot → WebSocket (conexión inicial)
+2. Bot ← identify_request  
+3. Bot → identify (type: "bot", username, apiKey, botName)
+4. Servidor valida credenciales
+5. Bot ← welcome message (si es válido) o error (si es inválido)
+6. Bot inicia heartbeat loop (solo si autenticado)
+```
+
+### 3. Gestión de API Keys
+```bash
+# Registrar nuevo bot
+npm run register-bot WebCrawler01
+
+# Listar bots registrados  
+npm run list-bots
+
+# Desactivar bot
+npm run deactivate-bot WebCrawler01
+
+# Reactivar bot
+npm run reactivate-bot WebCrawler01
+
+# Eliminar bot
+npm run delete-bot WebCrawler01
+```
 
 ## Versionado
 

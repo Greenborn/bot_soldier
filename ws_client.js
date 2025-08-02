@@ -10,11 +10,22 @@ const PORT = process.env.PORT || 3000;
 const WS_SERVER_URL = process.env.WS_SERVER_URL || 'ws://localhost:8080';
 const WS_LOCAL_PORT = parseInt(process.env.WS_LOCAL_PORT, 10) || 8081;
 const BOT_NAME = process.env.BOT_NAME || 'soldier';
+const BOT_USERNAME = process.env.BOT_USERNAME; // NUEVA VARIABLE REQUERIDA
+const BOT_API_KEY = process.env.BOT_API_KEY; // NUEVA VARIABLE REQUERIDA
 const RECONNECT_INTERVAL = parseInt(process.env.RECONNECT_INTERVAL, 10) || 5000; // ms
 const HEARTBEAT_INTERVAL = parseInt(process.env.HEARTBEAT_INTERVAL, 10) || 30000; // 30s por defecto
 const DOWNLOADS_DIR = path.resolve(process.env.DOWNLOADS_DIR || './descargas');
 
 console.log('Conectando a WebSocket en:', WS_SERVER_URL);
+
+// Validar credenciales requeridas
+if (!BOT_USERNAME || !BOT_API_KEY) {
+  console.error('ERROR: BOT_USERNAME y BOT_API_KEY son requeridos para la autenticación');
+  console.error('Por favor configura estas variables en tu archivo .env:');
+  console.error('BOT_USERNAME=tu_username_registrado');
+  console.error('BOT_API_KEY=tu_api_key_generada');
+  process.exit(1);
+}
 
 // Crear directorio de descargas si no existe
 async function ensureDownloadsDir() {
@@ -124,23 +135,33 @@ async function handleMessage(data) {
       case 'identify_request':
         console.log('Solicitud de identificación recibida');
         
-        // Responder identificándose como bot con el formato correcto
+        // Responder identificándose como bot con autenticación según el protocolo
         const identifyResponse = {
           type: 'identify',
           clientType: 'bot',
+          username: BOT_USERNAME,
+          apiKey: BOT_API_KEY,
           botName: BOT_NAME
         };
         
         if (ws && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify(identifyResponse));
-          console.log('Identificación enviada:', identifyResponse);
+          console.log('Identificación con autenticación enviada:', {
+            type: identifyResponse.type,
+            clientType: identifyResponse.clientType,
+            username: identifyResponse.username,
+            apiKey: identifyResponse.apiKey.substring(0, 10) + '...', // Solo mostrar inicio de la API key
+            botName: identifyResponse.botName
+          });
         }
         
         // Notificar a clientes locales
         broadcastToLocalClients({
           type: 'identification_sent',
           clientType: 'bot',
+          username: BOT_USERNAME,
           botName: BOT_NAME,
+          authenticated: true,
           timestamp: new Date().toISOString()
         });
         break;
@@ -153,12 +174,52 @@ async function handleMessage(data) {
       case 'welcome':
         console.log('Mensaje de bienvenida del coordinador:', message.message);
         
+        // Verificar si el bot fue autenticado exitosamente
+        if (message.authenticated === true) {
+          console.log('✅ Bot autenticado exitosamente en el servidor');
+          botState = 'idle';
+        } else {
+          console.log('ℹ️ Bienvenida recibida (autenticación pendiente)');
+        }
+        
         // Notificar a clientes locales
         broadcastToLocalClients({
           type: 'coordinator_welcome',
           message: message.message,
+          authenticated: message.authenticated || false,
           timestamp: new Date().toISOString()
         });
+        break;
+        
+      case 'error':
+        console.error('❌ Error del servidor:', message);
+        
+        // Manejar errores de autenticación específicos
+        if (message.code && (message.code.includes('CREDENTIALS') || message.code.includes('BOT_'))) {
+          console.error('❌ Error de autenticación:', message.message);
+          botState = 'error';
+          
+          // Notificar a clientes locales del error de autenticación
+          broadcastToLocalClients({
+            type: 'authentication_error',
+            code: message.code,
+            message: message.message,
+            timestamp: new Date().toISOString()
+          });
+          
+          // Detener heartbeat si hay error de autenticación
+          stopHeartbeat();
+        } else {
+          console.error('❌ Error general:', message.message);
+          
+          // Notificar a clientes locales del error general
+          broadcastToLocalClients({
+            type: 'coordinator_error',
+            code: message.code,
+            message: message.message,
+            timestamp: new Date().toISOString()
+          });
+        }
         break;
         
       case 'bots':
@@ -585,6 +646,8 @@ connectWS();
 app.get('/status', (req, res) => {
   res.json({
     bot: BOT_NAME,
+    username: BOT_USERNAME,
+    authenticated: botState !== 'error' && isConnected,
     connected: isConnected,
     lastWelcome: lastWelcome,
     ws_server: WS_SERVER_URL,
