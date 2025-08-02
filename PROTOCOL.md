@@ -28,7 +28,9 @@ Autentica un usuario y devuelve un token JWT.
 }
 ```
 
-**Response (Éxito):**
+**Response### 10. Manejo de Errores
+
+#### 10.1 Error General (Servidor → Cliente)xito):**
 ```json
 {
   "success": true,
@@ -593,7 +595,152 @@ Códigos de error de autenticación:
 }
 ```
 
-### 9. Manejo de Errores
+### 9. Mensajería Genérica y Eventos
+
+#### 9.1 Mensaje Genérico (Cliente/Panel → Servidor → Bot)
+```json
+{
+  "type": "generic_message",
+  "targetBot": "bot_id_123",
+  "category": "monitoring",
+  "priority": "normal",
+  "expectResponse": true,
+  "requestId": "req_1640995204500_abc123",
+  "payload": {
+    "action": "get_system_metrics",
+    "parameters": {
+      "include": ["cpu", "memory", "disk"],
+      "interval": "5m"
+    }
+  },
+  "metadata": {
+    "source": "admin_panel",
+    "userId": "admin",
+    "timestamp": 1640995204500
+  }
+}
+```
+
+#### 9.2 Respuesta a Mensaje Genérico (Bot → Servidor → Cliente)
+```json
+{
+  "type": "generic_message_response",
+  "requestId": "req_1640995204500_abc123",
+  "success": true,
+  "payload": {
+    "system_metrics": {
+      "cpu": 45.2,
+      "memory": 68.1,
+      "disk": 75.3
+    },
+    "collected_at": 1640995204500,
+    "interval": "5m"
+  },
+  "timestamp": 1640995205000
+}
+```
+
+#### 9.3 Mensaje Broadcast (Servidor → Múltiples Bots)
+```json
+{
+  "type": "broadcast_message",
+  "targets": ["soldier", "scout", "guardian"],
+  "category": "system_update",
+  "priority": "high",
+  "requestId": "broadcast_1640995204500_xyz789",
+  "payload": {
+    "action": "update_configuration",
+    "config": {
+      "log_level": "debug",
+      "heartbeat_interval": 15000
+    },
+    "apply_immediately": true
+  },
+  "metadata": {
+    "source": "server_admin",
+    "timestamp": 1640995204500
+  }
+}
+```
+
+#### 9.4 Confirmación de Broadcast (Bot → Servidor)
+```json
+{
+  "type": "broadcast_ack",
+  "requestId": "broadcast_1640995204500_xyz789",
+  "botName": "soldier",
+  "received": true,
+  "processed": true,
+  "timestamp": 1640995204600
+}
+```
+
+#### 9.5 Suscripción a Eventos (Cliente → Servidor)
+```json
+{
+  "type": "subscribe_events",
+  "events": ["system_alerts", "bot_status_change", "file_operations"],
+  "filter": {
+    "severity": ["high", "critical"],
+    "bots": ["soldier", "scout"],
+    "exclude_sources": ["test_client"]
+  },
+  "requestId": "sub_1640995204500_def456"
+}
+```
+
+#### 9.6 Confirmación de Suscripción (Servidor → Cliente)
+```json
+{
+  "type": "subscription_confirmed",
+  "requestId": "sub_1640995204500_def456",
+  "events": ["system_alerts", "bot_status_change", "file_operations"],
+  "subscriptionId": "sub_active_789",
+  "timestamp": 1640995204500
+}
+```
+
+#### 9.7 Notificación de Evento (Servidor → Suscriptores)
+```json
+{
+  "type": "event_notification",
+  "event": "system_alert",
+  "category": "monitoring",
+  "severity": "high",
+  "data": {
+    "alert_type": "high_cpu_usage",
+    "bot": "soldier",
+    "cpu_usage": 95.2,
+    "threshold": 90.0,
+    "duration": 300000
+  },
+  "timestamp": 1640995204500,
+  "subscriptionId": "sub_active_789"
+}
+```
+
+#### 9.8 Cancelar Suscripción (Cliente → Servidor)
+```json
+{
+  "type": "unsubscribe_events",
+  "events": ["system_alerts"],
+  "subscriptionId": "sub_active_789",
+  "requestId": "unsub_1640995204500_ghi789"
+}
+```
+
+#### 9.9 Confirmación de Cancelación (Servidor → Cliente)
+```json
+{
+  "type": "unsubscription_confirmed",
+  "requestId": "unsub_1640995204500_ghi789",
+  "events": ["system_alerts"],
+  "subscriptionId": "sub_active_789",
+  "timestamp": 1640995204500
+}
+```
+
+### 10. Manejo de Errores
 
 #### 8.1 Error General (Servidor → Cliente)
 ```json
@@ -621,6 +768,31 @@ Códigos de error de autenticación:
 | `INVALID_MESSAGE` | Mensaje inválido | Formato o estructura de mensaje incorrecta | No |
 | `BOT_NOT_FOUND` | Bot no encontrado | El bot objetivo no está conectado | Sí |
 | `RATE_LIMITED` | Límite de velocidad | Demasiadas solicitudes en poco tiempo | Sí |
+| `MESSAGE_TOO_LARGE` | Mensaje muy grande | El payload excede el límite de tamaño | No |
+| `INVALID_CATEGORY` | Categoría inválida | Categoría de mensaje no reconocida | No |
+| `SUBSCRIPTION_LIMIT` | Límite de suscripciones | Máximo número de suscripciones alcanzado | Sí |
+| `EVENT_NOT_FOUND` | Evento no encontrado | El evento solicitado no existe | No |
+| `INSUFFICIENT_PERMISSIONS` | Permisos insuficientes | No autorizado para la operación | No |
+
+## Categorías de Mensajes Genéricos
+
+| Categoría | Descripción | Ejemplos de Uso |
+|-----------|-------------|-----------------|
+| `system` | Operaciones del sistema | Configuración, actualizaciones, mantenimiento |
+| `monitoring` | Monitoreo y métricas | CPU, memoria, estado de servicios |
+| `data` | Intercambio de datos | Transferencia de archivos, base de datos |
+| `notification` | Notificaciones | Alertas, avisos, recordatorios |
+| `command` | Comandos especiales | Operaciones personalizadas |
+| `custom` | Mensajes personalizados | Casos específicos de uso |
+
+## Prioridades de Mensajes
+
+| Prioridad | Descripción | Procesamiento | TTL |
+|-----------|-------------|---------------|-----|
+| `low` | Baja prioridad | Cuando recursos disponibles | 24h |
+| `normal` | Prioridad normal | Orden FIFO estándar | 8h |
+| `high` | Alta prioridad | Procesamiento preferente | 2h |
+| `urgent` | Crítico | Procesamiento inmediato | 30m |
 
 ## Estados de Bot
 
@@ -658,6 +830,9 @@ Códigos de error de autenticación:
 5. **Acciones**: Validar parámetros antes de ejecutar acciones
 6. **Estados**: Mantener estado consistente y reportar cambios
 7. **Errores**: Usar códigos de error estándar y proporcionar mensajes descriptivos
+8. **Mensajería genérica**: Procesar mensajes según categoría y prioridad
+9. **Suscripciones**: Manejar eventos suscritos de forma eficiente
+10. **Respuestas**: Responder a mensajes que expectResponse=true
 
 ### Para Paneles
 1. **Autenticación**: Autenticarse via HTTP antes de usar WebSocket
@@ -666,6 +841,10 @@ Códigos de error de autenticación:
 4. **Timeouts**: Implementar timeouts para acciones de larga duración
 5. **Manejo de errores**: Manejar todos los tipos de respuesta (éxito, error, timeout)
 6. **Token Management**: Renovar tokens antes de que expiren (24h)
+7. **Mensajería**: Usar categorías apropiadas para mensajes genéricos
+8. **Filtros**: Aplicar filtros eficientes en suscripciones
+9. **Prioridades**: Usar prioridades adecuadas según urgencia
+10. **Cleanup**: Cancelar suscripciones no utilizadas
 
 ### Para el Servidor
 1. **Autenticación**: Validar tokens JWT para paneles y API keys para bots
@@ -676,6 +855,10 @@ Códigos de error de autenticación:
 6. **Broadcast**: Enviar actualizaciones solo a clientes relevantes
 7. **Rate Limiting**: Aplicar límites de velocidad en endpoints críticos
 8. **Logs de seguridad**: Registrar intentos de autenticación fallidos
+9. **Gestión de eventos**: Mantener registro eficiente de suscripciones
+10. **Cleanup**: Limpiar suscripciones de clientes desconectados
+11. **Priorización**: Procesar mensajes según prioridad
+12. **Filtrado**: Aplicar filtros de eventos correctamente
 
 ## Flujo de Autenticación Completo
 

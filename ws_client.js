@@ -760,6 +760,126 @@ async function handleMessage(data) {
         }
         break;
         
+      case 'generic_message':
+        console.log('Mensaje genérico recibido del coordinador:', {
+          category: message.category,
+          requestId: message.requestId,
+          hasPayload: !!message.payload
+        });
+        
+        // Reenviar a clientes locales si es apropiado
+        broadcastToLocalClients({
+          type: 'coordinator_generic_message',
+          category: message.category,
+          requestId: message.requestId,
+          payload: message.payload,
+          metadata: message.metadata,
+          timestamp: new Date().toISOString()
+        });
+        
+        // Si espera respuesta, enviar confirmación
+        if (message.expectResponse) {
+          const response = {
+            type: 'generic_message_response',
+            requestId: message.requestId,
+            success: true,
+            payload: {
+              message: 'Mensaje genérico recibido correctamente',
+              botStatus: botState,
+              processed: true
+            },
+            timestamp: Date.now()
+          };
+          
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify(response));
+            console.log('Respuesta genérica enviada:', response.requestId);
+          }
+        }
+        break;
+        
+      case 'broadcast_message':
+        console.log('Mensaje broadcast recibido:', {
+          category: message.category,
+          requestId: message.requestId,
+          targets: message.targets
+        });
+        
+        // Verificar si este bot está en los targets
+        if (message.targets.includes('all') || 
+            message.targets.includes(BOT_NAME) || 
+            message.targets.includes(BOT_USERNAME)) {
+          
+          // Procesar mensaje broadcast
+          broadcastToLocalClients({
+            type: 'coordinator_broadcast',
+            category: message.category,
+            requestId: message.requestId,
+            payload: message.payload,
+            targets: message.targets,
+            timestamp: new Date().toISOString()
+          });
+          
+          // Enviar confirmación de recepción
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            const ackMessage = {
+              type: 'broadcast_ack',
+              requestId: message.requestId,
+              botName: BOT_NAME,
+              received: true,
+              timestamp: Date.now()
+            };
+            ws.send(JSON.stringify(ackMessage));
+          }
+        }
+        break;
+        
+      case 'event_notification':
+        console.log('Evento notificado:', {
+          event: message.event,
+          category: message.category,
+          severity: message.severity
+        });
+        
+        // Reenviar evento a clientes locales
+        broadcastToLocalClients({
+          type: 'coordinator_event',
+          event: message.event,
+          category: message.category,
+          severity: message.severity || 'normal',
+          data: message.data,
+          timestamp: new Date().toISOString()
+        });
+        break;
+        
+      case 'subscription_confirmed':
+        console.log('Suscripción confirmada:', {
+          requestId: message.requestId,
+          events: message.events
+        });
+        
+        broadcastToLocalClients({
+          type: 'subscription_confirmed',
+          requestId: message.requestId,
+          events: message.events,
+          timestamp: new Date().toISOString()
+        });
+        break;
+        
+      case 'subscription_failed':
+        console.log('Suscripción fallida:', {
+          requestId: message.requestId,
+          error: message.error
+        });
+        
+        broadcastToLocalClients({
+          type: 'subscription_failed',
+          requestId: message.requestId,
+          error: message.error,
+          timestamp: new Date().toISOString()
+        });
+        break;
+        
       default:
         console.log('Tipo de mensaje no reconocido:', message.type);
         
@@ -966,6 +1086,220 @@ app.delete('/pty/:sessionId', (req, res) => {
   }
 });
 
+// Endpoint para enviar mensajes genéricos al coordinador
+app.post('/message/generic', (req, res) => {
+  const { payload, category = 'custom', priority = 'normal', expectResponse = false } = req.body;
+  
+  if (!payload) {
+    return res.status(400).json({
+      success: false,
+      error: 'Payload requerido'
+    });
+  }
+  
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    return res.status(503).json({
+      success: false,
+      error: 'No hay conexión con el coordinador'
+    });
+  }
+  
+  const requestId = `http_req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  
+  const genericMessage = {
+    type: 'generic_message',
+    category: category,
+    priority: priority,
+    expectResponse: expectResponse,
+    requestId: requestId,
+    payload: payload,
+    metadata: {
+      source: 'http_api',
+      botName: BOT_NAME,
+      timestamp: Date.now()
+    }
+  };
+  
+  try {
+    ws.send(JSON.stringify(genericMessage));
+    console.log('Mensaje genérico HTTP enviado:', requestId);
+    
+    res.json({
+      success: true,
+      requestId: requestId,
+      category: category,
+      priority: priority,
+      expectResponse: expectResponse,
+      message: 'Mensaje genérico enviado al coordinador',
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('Error enviando mensaje genérico:', error.message);
+    
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Endpoint para enviar mensajes broadcast
+app.post('/message/broadcast', (req, res) => {
+  const { payload, targets = ['all'], category = 'custom', priority = 'normal' } = req.body;
+  
+  if (!payload) {
+    return res.status(400).json({
+      success: false,
+      error: 'Payload requerido'
+    });
+  }
+  
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    return res.status(503).json({
+      success: false,
+      error: 'No hay conexión con el coordinador'
+    });
+  }
+  
+  const requestId = `broadcast_http_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  
+  const broadcastMessage = {
+    type: 'broadcast_message',
+    targets: targets,
+    category: category,
+    priority: priority,
+    requestId: requestId,
+    payload: payload,
+    metadata: {
+      source: 'http_api',
+      botName: BOT_NAME,
+      timestamp: Date.now()
+    }
+  };
+  
+  try {
+    ws.send(JSON.stringify(broadcastMessage));
+    console.log('Mensaje broadcast HTTP enviado:', requestId);
+    
+    res.json({
+      success: true,
+      requestId: requestId,
+      targets: targets,
+      category: category,
+      priority: priority,
+      message: 'Mensaje broadcast enviado',
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('Error enviando mensaje broadcast:', error.message);
+    
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Endpoint para gestionar suscripciones
+app.post('/subscription/subscribe', (req, res) => {
+  const { events = ['system_updates'], filter = {} } = req.body;
+  
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    return res.status(503).json({
+      success: false,
+      error: 'No hay conexión con el coordinador'
+    });
+  }
+  
+  const requestId = `sub_http_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  
+  const subscribeMessage = {
+    type: 'subscribe_events',
+    events: events,
+    filter: filter,
+    requestId: requestId,
+    metadata: {
+      source: 'http_api',
+      botName: BOT_NAME,
+      timestamp: Date.now()
+    }
+  };
+  
+  try {
+    ws.send(JSON.stringify(subscribeMessage));
+    console.log('Suscripción HTTP enviada:', requestId);
+    
+    res.json({
+      success: true,
+      requestId: requestId,
+      events: events,
+      filter: filter,
+      message: 'Suscripción solicitada',
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('Error enviando suscripción:', error.message);
+    
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Endpoint para cancelar suscripciones
+app.post('/subscription/unsubscribe', (req, res) => {
+  const { events = ['all'] } = req.body;
+  
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    return res.status(503).json({
+      success: false,
+      error: 'No hay conexión con el coordinador'
+    });
+  }
+  
+  const requestId = `unsub_http_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  
+  const unsubscribeMessage = {
+    type: 'unsubscribe_events',
+    events: events,
+    requestId: requestId,
+    metadata: {
+      source: 'http_api',
+      botName: BOT_NAME,
+      timestamp: Date.now()
+    }
+  };
+  
+  try {
+    ws.send(JSON.stringify(unsubscribeMessage));
+    console.log('Cancelación suscripción HTTP enviada:', requestId);
+    
+    res.json({
+      success: true,
+      requestId: requestId,
+      events: events,
+      message: 'Cancelación de suscripción solicitada',
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('Error cancelando suscripción:', error.message);
+    
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`Servidor Express escuchando en http://localhost:${PORT}`);
 });
@@ -1151,6 +1485,191 @@ localWsServer.on('connection', (localWs, request) => {
             total: ptySessions.length,
             timestamp: new Date().toISOString()
           }));
+          break;
+          
+        case 'generic_message':
+          // Enviar mensaje genérico al coordinador
+          if (!message.payload) {
+            localWs.send(JSON.stringify({
+              type: 'error',
+              message: 'Payload requerido para mensaje genérico',
+              timestamp: new Date().toISOString()
+            }));
+            break;
+          }
+          
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            const genericMessage = {
+              type: 'generic_message',
+              category: message.category || 'custom',
+              priority: message.priority || 'normal',
+              expectResponse: message.expectResponse || false,
+              requestId: message.requestId || `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+              payload: message.payload,
+              metadata: {
+                source: 'local_client',
+                clientId: clientId,
+                botName: BOT_NAME,
+                timestamp: Date.now()
+              }
+            };
+            
+            ws.send(JSON.stringify(genericMessage));
+            console.log('Mensaje genérico enviado al coordinador:', {
+              type: genericMessage.type,
+              category: genericMessage.category,
+              requestId: genericMessage.requestId,
+              hasPayload: !!genericMessage.payload
+            });
+            
+            localWs.send(JSON.stringify({
+              type: 'generic_message_sent',
+              success: true,
+              requestId: genericMessage.requestId,
+              category: genericMessage.category,
+              message: 'Mensaje genérico enviado al coordinador',
+              timestamp: new Date().toISOString()
+            }));
+          } else {
+            localWs.send(JSON.stringify({
+              type: 'generic_message_failed',
+              success: false,
+              error: 'No hay conexión con el coordinador',
+              timestamp: new Date().toISOString()
+            }));
+          }
+          break;
+          
+        case 'broadcast_message':
+          // Enviar mensaje broadcast al coordinador
+          if (!message.payload) {
+            localWs.send(JSON.stringify({
+              type: 'error',
+              message: 'Payload requerido para mensaje broadcast',
+              timestamp: new Date().toISOString()
+            }));
+            break;
+          }
+          
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            const broadcastMessage = {
+              type: 'broadcast_message',
+              targets: message.targets || ['all'],
+              category: message.category || 'custom',
+              priority: message.priority || 'normal',
+              requestId: message.requestId || `broadcast_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+              payload: message.payload,
+              metadata: {
+                source: 'local_client',
+                clientId: clientId,
+                botName: BOT_NAME,
+                timestamp: Date.now()
+              }
+            };
+            
+            ws.send(JSON.stringify(broadcastMessage));
+            console.log('Mensaje broadcast enviado al coordinador:', {
+              type: broadcastMessage.type,
+              targets: broadcastMessage.targets,
+              category: broadcastMessage.category,
+              requestId: broadcastMessage.requestId
+            });
+            
+            localWs.send(JSON.stringify({
+              type: 'broadcast_message_sent',
+              success: true,
+              requestId: broadcastMessage.requestId,
+              targets: broadcastMessage.targets,
+              category: broadcastMessage.category,
+              timestamp: new Date().toISOString()
+            }));
+          } else {
+            localWs.send(JSON.stringify({
+              type: 'broadcast_message_failed',
+              success: false,
+              error: 'No hay conexión con el coordinador',
+              timestamp: new Date().toISOString()
+            }));
+          }
+          break;
+          
+        case 'subscribe_events':
+          // Suscribirse a eventos del coordinador
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            const subscribeMessage = {
+              type: 'subscribe_events',
+              events: message.events || ['system_updates'],
+              filter: message.filter || {},
+              requestId: message.requestId || `sub_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+              metadata: {
+                source: 'local_client',
+                clientId: clientId,
+                botName: BOT_NAME,
+                timestamp: Date.now()
+              }
+            };
+            
+            ws.send(JSON.stringify(subscribeMessage));
+            console.log('Suscripción enviada al coordinador:', {
+              type: subscribeMessage.type,
+              events: subscribeMessage.events,
+              requestId: subscribeMessage.requestId
+            });
+            
+            localWs.send(JSON.stringify({
+              type: 'subscription_requested',
+              success: true,
+              requestId: subscribeMessage.requestId,
+              events: subscribeMessage.events,
+              timestamp: new Date().toISOString()
+            }));
+          } else {
+            localWs.send(JSON.stringify({
+              type: 'subscription_failed',
+              success: false,
+              error: 'No hay conexión con el coordinador',
+              timestamp: new Date().toISOString()
+            }));
+          }
+          break;
+          
+        case 'unsubscribe_events':
+          // Cancelar suscripción a eventos
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            const unsubscribeMessage = {
+              type: 'unsubscribe_events',
+              events: message.events || ['all'],
+              requestId: message.requestId || `unsub_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+              metadata: {
+                source: 'local_client',
+                clientId: clientId,
+                botName: BOT_NAME,
+                timestamp: Date.now()
+              }
+            };
+            
+            ws.send(JSON.stringify(unsubscribeMessage));
+            console.log('Cancelación de suscripción enviada:', {
+              type: unsubscribeMessage.type,
+              events: unsubscribeMessage.events,
+              requestId: unsubscribeMessage.requestId
+            });
+            
+            localWs.send(JSON.stringify({
+              type: 'unsubscription_requested',
+              success: true,
+              requestId: unsubscribeMessage.requestId,
+              events: unsubscribeMessage.events,
+              timestamp: new Date().toISOString()
+            }));
+          } else {
+            localWs.send(JSON.stringify({
+              type: 'unsubscription_failed',
+              success: false,
+              error: 'No hay conexión con el coordinador',
+              timestamp: new Date().toISOString()
+            }));
+          }
           break;
           
         case 'forward_to_coordinator':
@@ -1381,6 +1900,9 @@ app.get('/status', (req, res) => {
       heartbeat: true,
       pty_terminal: true,
       interactive_commands: true,
+      generic_messaging: true,
+      broadcast_messaging: true,
+      event_subscriptions: true,
       max_command_timeout: 30000, // 30 segundos
       max_output_buffer: 1048576,  // 1MB
       max_pty_sessions: 10,
@@ -1390,6 +1912,13 @@ app.get('/status', (req, res) => {
       active_sessions: activeSessions.size,
       session_counter: sessionCounter,
       cleanup_interval: '30 minutes'
+    },
+    messaging: {
+      generic_messages_supported: true,
+      broadcast_messages_supported: true,
+      event_subscriptions_supported: true,
+      supported_categories: ['system', 'monitoring', 'data', 'notification', 'command', 'custom'],
+      supported_priorities: ['low', 'normal', 'high', 'urgent']
     }
   });
 });
