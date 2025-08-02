@@ -453,9 +453,116 @@ Códigos de error de autenticación:
 }
 ```
 
-### 7. Actualizaciones de Estado del Sistema
+### 7. Terminal Interactivo PTY
 
-#### 7.1 Actualización de Clientes (Servidor → Paneles)
+#### 7.1 Iniciar Sesión PTY (Panel → Bot vía Servidor)
+```json
+{
+  "type": "pty_start",
+  "targetBot": "bot_id_123",
+  "requestId": "pty_req_1640995204500_abc123",
+  "command": "nano /etc/hosts",
+  "interactive": true,
+  "cols": 80,
+  "rows": 24
+}
+```
+
+#### 7.2 Sesión PTY Iniciada (Bot → Panel vía Servidor)
+```json
+{
+  "type": "pty_started",
+  "requestId": "pty_req_1640995204500_abc123",
+  "sessionId": "pty_1640995204500_1",
+  "command": "nano /etc/hosts",
+  "success": true,
+  "timestamp": 1640995204500
+}
+```
+
+#### 7.3 Salida PTY en Tiempo Real (Bot → Panel vía Servidor)
+```json
+{
+  "type": "pty_output",
+  "sessionId": "pty_1640995204500_1",
+  "requestId": "pty_req_1640995204500_abc123",
+  "data": "\u001b[H\u001b[2JGNU nano 6.2                File: /etc/hosts",
+  "timestamp": 1640995204600
+}
+```
+
+#### 7.4 Enviar Entrada a PTY (Panel → Bot vía Servidor)
+```json
+{
+  "type": "pty_input",
+  "sessionId": "pty_1640995204500_1",
+  "data": "127.0.0.1\tlocalhost\r"
+}
+```
+
+#### 7.5 Redimensionar Terminal PTY (Panel → Bot vía Servidor)
+```json
+{
+  "type": "pty_resize",
+  "sessionId": "pty_1640995204500_1",
+  "cols": 120,
+  "rows": 30
+}
+```
+
+#### 7.6 Terminar Sesión PTY (Panel → Bot vía Servidor)
+```json
+{
+  "type": "pty_kill",
+  "sessionId": "pty_1640995204500_1",
+  "signal": "SIGTERM"
+}
+```
+
+#### 7.7 Sesión PTY Terminada (Bot → Panel vía Servidor)
+```json
+{
+  "type": "pty_session_ended",
+  "sessionId": "pty_1640995204500_1",
+  "requestId": "pty_req_1640995204500_abc123",
+  "command": "nano /etc/hosts",
+  "success": true,
+  "output": "contenido_completo_de_la_sesion...",
+  "exitCode": 0,
+  "signal": null,
+  "duration": 45000
+}
+```
+
+#### 7.8 Listar Sesiones PTY (Panel → Bot vía Servidor)
+```json
+{
+  "type": "pty_list",
+  "targetBot": "bot_id_123"
+}
+```
+
+#### 7.9 Lista de Sesiones PTY (Bot → Panel vía Servidor)
+```json
+{
+  "type": "pty_sessions_list",
+  "sessions": [
+    {
+      "sessionId": "pty_1640995204500_1",
+      "requestId": "pty_req_1640995204500_abc123",
+      "command": "nano /etc/hosts",
+      "createdAt": 1640995204500,
+      "uptime": 45000
+    }
+  ],
+  "total": 1,
+  "timestamp": 1640995250000
+}
+```
+
+### 8. Actualizaciones de Estado del Sistema
+
+#### 8.1 Actualización de Clientes (Servidor → Paneles)
 ```json
 {
   "type": "clients_update",
@@ -486,7 +593,7 @@ Códigos de error de autenticación:
 }
 ```
 
-### 8. Manejo de Errores
+### 9. Manejo de Errores
 
 #### 8.1 Error General (Servidor → Cliente)
 ```json

@@ -6,6 +6,7 @@ const path = require('path');
 const yauzl = require('yauzl');
 const { exec } = require('child_process');
 const { promisify } = require('util');
+const pty = require('node-pty');
 
 // Promisificar exec para usar async/await
 const execAsync = promisify(exec);
@@ -22,6 +23,10 @@ const HEARTBEAT_INTERVAL = parseInt(process.env.HEARTBEAT_INTERVAL, 10) || 30000
 const DOWNLOADS_DIR = path.resolve(process.env.DOWNLOADS_DIR || './descargas');
 
 console.log('Conectando a WebSocket en:', WS_SERVER_URL);
+
+// Variables para manejar sesiones de terminal PTY
+const activeSessions = new Map(); // sessionId -> { pty, requestId, command }
+let sessionCounter = 0;
 
 // Validar credenciales requeridas
 if (!BOT_USERNAME || !BOT_API_KEY) {
@@ -129,6 +134,119 @@ async function extractZipFromBase64(base64Data, filename, extractTo = '') {
     throw new Error(`Error en extracción: ${error.message}`);
   }
 }
+
+// Función para crear una nueva sesión PTY
+function createPtySession(sessionId, command, requestId) {
+  const shell = process.platform === 'win32' ? 'powershell.exe' : 'bash';
+  
+  // Crear nuevo PTY
+  const ptyProcess = pty.spawn(shell, [], {
+    name: 'xterm-color',
+    cols: 80,
+    rows: 24,
+    cwd: process.cwd(),
+    env: process.env
+  });
+  
+  // Almacenar sesión
+  activeSessions.set(sessionId, {
+    pty: ptyProcess,
+    requestId: requestId,
+    command: command,
+    output: '',
+    createdAt: Date.now()
+  });
+  
+  // Manejar datos de salida del PTY
+  ptyProcess.onData((data) => {
+    const session = activeSessions.get(sessionId);
+    if (session) {
+      session.output += data;
+      
+      // Enviar datos de salida en tiempo real al servidor
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        const response = {
+          type: 'pty_output',
+          sessionId: sessionId,
+          requestId: requestId,
+          data: data,
+          timestamp: Date.now()
+        };
+        ws.send(JSON.stringify(response));
+      }
+      
+      // Notificar a clientes locales
+      broadcastToLocalClients({
+        type: 'pty_output',
+        sessionId: sessionId,
+        requestId: requestId,
+        data: data,
+        timestamp: new Date().toISOString()
+      });
+    }
+  });
+  
+  // Manejar cierre del PTY
+  ptyProcess.onExit((exitCode, signal) => {
+    const session = activeSessions.get(sessionId);
+    if (session) {
+      console.log(`Sesión PTY ${sessionId} terminada con código ${exitCode}`);
+      
+      // Enviar respuesta final al servidor
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        const response = {
+          type: 'pty_session_ended',
+          sessionId: sessionId,
+          requestId: requestId,
+          command: session.command,
+          success: exitCode === 0,
+          output: session.output,
+          exitCode: exitCode,
+          signal: signal,
+          duration: Date.now() - session.createdAt
+        };
+        ws.send(JSON.stringify(response));
+      }
+      
+      // Notificar a clientes locales
+      broadcastToLocalClients({
+        type: 'pty_session_ended',
+        sessionId: sessionId,
+        requestId: requestId,
+        exitCode: exitCode,
+        signal: signal,
+        timestamp: new Date().toISOString()
+      });
+      
+      // Limpiar sesión
+      activeSessions.delete(sessionId);
+    }
+  });
+  
+  // Ejecutar comando inicial si se proporciona
+  if (command) {
+    ptyProcess.write(command + '\r');
+  }
+  
+  return ptyProcess;
+}
+
+// Función para limpiar sesiones PTY inactivas (más de 1 hora)
+function cleanupInactiveSessions() {
+  const now = Date.now();
+  const oneHour = 60 * 60 * 1000;
+  
+  for (const [sessionId, session] of activeSessions) {
+    if (now - session.createdAt > oneHour) {
+      console.log(`Limpiando sesión PTY inactiva: ${sessionId}`);
+      session.pty.kill();
+      activeSessions.delete(sessionId);
+    }
+  }
+}
+
+// Limpiar sesiones inactivas cada 30 minutos
+setInterval(cleanupInactiveSessions, 30 * 60 * 1000);
 
 // Función para manejar mensajes recibidos
 async function handleMessage(data) {
@@ -435,6 +553,213 @@ async function handleMessage(data) {
         }
         break;
         
+      case 'pty_start':
+        console.log('Iniciando sesión PTY:', {
+          command: message.command,
+          requestId: message.requestId,
+          interactive: message.interactive || false
+        });
+        
+        // Cambiar estado del bot a trabajando
+        botState = 'working';
+        currentAction = 'pty_session';
+        
+        // Generar ID único para la sesión
+        sessionCounter++;
+        const sessionId = `pty_${Date.now()}_${sessionCounter}`;
+        
+        // Notificar inicio de sesión PTY
+        broadcastToLocalClients({
+          type: 'pty_session_started',
+          sessionId: sessionId,
+          requestId: message.requestId,
+          command: message.command,
+          timestamp: new Date().toISOString()
+        });
+        
+        try {
+          // Crear nueva sesión PTY
+          const ptyProcess = createPtySession(sessionId, message.command, message.requestId);
+          
+          // Enviar confirmación de inicio al servidor
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            const response = {
+              type: 'pty_started',
+              sessionId: sessionId,
+              requestId: message.requestId,
+              command: message.command,
+              success: true,
+              timestamp: Date.now()
+            };
+            ws.send(JSON.stringify(response));
+          }
+          
+          console.log(`Sesión PTY iniciada: ${sessionId}`);
+          
+        } catch (error) {
+          console.error('Error iniciando sesión PTY:', error.message);
+          
+          // Cambiar estado del bot a error temporalmente
+          botState = 'error';
+          currentAction = null;
+          
+          setTimeout(() => {
+            botState = 'idle';
+          }, 5000);
+          
+          // Enviar error al servidor
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            const errorResponse = {
+              type: 'pty_error',
+              sessionId: sessionId,
+              requestId: message.requestId,
+              command: message.command,
+              success: false,
+              error: error.message
+            };
+            ws.send(JSON.stringify(errorResponse));
+          }
+          
+          // Notificar error a clientes locales
+          broadcastToLocalClients({
+            type: 'pty_session_failed',
+            sessionId: sessionId,
+            requestId: message.requestId,
+            error: error.message,
+            timestamp: new Date().toISOString()
+          });
+        }
+        break;
+        
+      case 'pty_input':
+        console.log('Entrada PTY recibida:', {
+          sessionId: message.sessionId,
+          dataLength: message.data ? message.data.length : 0
+        });
+        
+        const session = activeSessions.get(message.sessionId);
+        if (session) {
+          try {
+            // Enviar datos de entrada al PTY
+            session.pty.write(message.data);
+            
+            // Confirmar recepción
+            if (ws && ws.readyState === WebSocket.OPEN) {
+              const response = {
+                type: 'pty_input_received',
+                sessionId: message.sessionId,
+                success: true,
+                timestamp: Date.now()
+              };
+              ws.send(JSON.stringify(response));
+            }
+            
+          } catch (error) {
+            console.error('Error enviando entrada a PTY:', error.message);
+            
+            if (ws && ws.readyState === WebSocket.OPEN) {
+              const errorResponse = {
+                type: 'pty_input_error',
+                sessionId: message.sessionId,
+                success: false,
+                error: error.message
+              };
+              ws.send(JSON.stringify(errorResponse));
+            }
+          }
+        } else {
+          console.warn(`Sesión PTY no encontrada: ${message.sessionId}`);
+          
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            const errorResponse = {
+              type: 'pty_session_not_found',
+              sessionId: message.sessionId,
+              success: false,
+              error: 'Sesión no encontrada'
+            };
+            ws.send(JSON.stringify(errorResponse));
+          }
+        }
+        break;
+        
+      case 'pty_resize':
+        console.log('Redimensionando PTY:', {
+          sessionId: message.sessionId,
+          cols: message.cols,
+          rows: message.rows
+        });
+        
+        const resizeSession = activeSessions.get(message.sessionId);
+        if (resizeSession) {
+          try {
+            resizeSession.pty.resize(message.cols || 80, message.rows || 24);
+            
+            if (ws && ws.readyState === WebSocket.OPEN) {
+              const response = {
+                type: 'pty_resized',
+                sessionId: message.sessionId,
+                success: true,
+                cols: message.cols,
+                rows: message.rows
+              };
+              ws.send(JSON.stringify(response));
+            }
+            
+          } catch (error) {
+            console.error('Error redimensionando PTY:', error.message);
+          }
+        }
+        break;
+        
+      case 'pty_kill':
+        console.log('Terminando sesión PTY:', {
+          sessionId: message.sessionId,
+          signal: message.signal || 'SIGTERM'
+        });
+        
+        const killSession = activeSessions.get(message.sessionId);
+        if (killSession) {
+          try {
+            killSession.pty.kill(message.signal || 'SIGTERM');
+            
+            if (ws && ws.readyState === WebSocket.OPEN) {
+              const response = {
+                type: 'pty_kill_sent',
+                sessionId: message.sessionId,
+                success: true,
+                signal: message.signal || 'SIGTERM'
+              };
+              ws.send(JSON.stringify(response));
+            }
+            
+          } catch (error) {
+            console.error('Error terminando PTY:', error.message);
+          }
+        }
+        break;
+        
+      case 'pty_list':
+        console.log('Listando sesiones PTY activas');
+        
+        const sessionsList = Array.from(activeSessions.entries()).map(([id, session]) => ({
+          sessionId: id,
+          requestId: session.requestId,
+          command: session.command,
+          createdAt: session.createdAt,
+          uptime: Date.now() - session.createdAt
+        }));
+        
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          const response = {
+            type: 'pty_sessions_list',
+            sessions: sessionsList,
+            total: sessionsList.length,
+            timestamp: Date.now()
+          };
+          ws.send(JSON.stringify(response));
+        }
+        break;
+        
       default:
         console.log('Tipo de mensaje no reconocido:', message.type);
         
@@ -498,6 +823,144 @@ app.post('/command', async (req, res) => {
       output: null,
       error: error.message,
       exitCode: error.code || 1,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Endpoint para iniciar sesiones PTY localmente (para testing)
+app.post('/pty/start', async (req, res) => {
+  const { command, interactive = true } = req.body;
+  
+  if (!command) {
+    return res.status(400).json({
+      success: false,
+      error: 'Comando requerido'
+    });
+  }
+  
+  console.log('Iniciando sesión PTY local:', command);
+  
+  try {
+    sessionCounter++;
+    const sessionId = `local_pty_${Date.now()}_${sessionCounter}`;
+    const requestId = `local_req_${Date.now()}`;
+    
+    // Crear sesión PTY
+    const ptyProcess = createPtySession(sessionId, command, requestId);
+    
+    res.json({
+      success: true,
+      sessionId: sessionId,
+      command: command,
+      interactive: interactive,
+      timestamp: new Date().toISOString(),
+      message: 'Sesión PTY iniciada exitosamente'
+    });
+    
+  } catch (error) {
+    console.error('Error iniciando sesión PTY local:', error.message);
+    
+    res.json({
+      success: false,
+      command: command,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Endpoint para enviar entrada a sesión PTY
+app.post('/pty/:sessionId/input', (req, res) => {
+  const { sessionId } = req.params;
+  const { data } = req.body;
+  
+  if (!data) {
+    return res.status(400).json({
+      success: false,
+      error: 'Datos de entrada requeridos'
+    });
+  }
+  
+  const session = activeSessions.get(sessionId);
+  if (!session) {
+    return res.status(404).json({
+      success: false,
+      error: 'Sesión no encontrada'
+    });
+  }
+  
+  try {
+    session.pty.write(data);
+    
+    res.json({
+      success: true,
+      sessionId: sessionId,
+      message: 'Entrada enviada exitosamente',
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('Error enviando entrada a PTY:', error.message);
+    
+    res.json({
+      success: false,
+      sessionId: sessionId,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Endpoint para listar sesiones PTY activas
+app.get('/pty/sessions', (req, res) => {
+  const sessionsList = Array.from(activeSessions.entries()).map(([id, session]) => ({
+    sessionId: id,
+    requestId: session.requestId,
+    command: session.command,
+    createdAt: new Date(session.createdAt).toISOString(),
+    uptime: Date.now() - session.createdAt,
+    outputLength: session.output.length
+  }));
+  
+  res.json({
+    sessions: sessionsList,
+    total: sessionsList.length,
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Endpoint para terminar sesión PTY
+app.delete('/pty/:sessionId', (req, res) => {
+  const { sessionId } = req.params;
+  const { signal = 'SIGTERM' } = req.body;
+  
+  const session = activeSessions.get(sessionId);
+  if (!session) {
+    return res.status(404).json({
+      success: false,
+      error: 'Sesión no encontrada'
+    });
+  }
+  
+  try {
+    session.pty.kill(signal);
+    
+    res.json({
+      success: true,
+      sessionId: sessionId,
+      signal: signal,
+      message: 'Señal enviada exitosamente',
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('Error terminando PTY:', error.message);
+    
+    res.json({
+      success: false,
+      sessionId: sessionId,
+      error: error.message,
       timestamp: new Date().toISOString()
     });
   }
@@ -601,6 +1064,93 @@ localWsServer.on('connection', (localWs, request) => {
                 timestamp: new Date().toISOString()
               }));
             });
+          break;
+          
+        case 'pty_start_local':
+          // Iniciar sesión PTY desde cliente local
+          const { command: ptyCommand, interactive = true } = message;
+          
+          if (!ptyCommand) {
+            localWs.send(JSON.stringify({
+              type: 'error',
+              message: 'Comando requerido para PTY',
+              timestamp: new Date().toISOString()
+            }));
+            break;
+          }
+          
+          try {
+            sessionCounter++;
+            const sessionId = `local_ws_pty_${Date.now()}_${sessionCounter}`;
+            const requestId = `local_ws_req_${Date.now()}`;
+            
+            // Crear sesión PTY
+            const ptyProcess = createPtySession(sessionId, ptyCommand, requestId);
+            
+            localWs.send(JSON.stringify({
+              type: 'pty_started',
+              sessionId: sessionId,
+              command: ptyCommand,
+              success: true,
+              timestamp: new Date().toISOString()
+            }));
+            
+          } catch (error) {
+            localWs.send(JSON.stringify({
+              type: 'pty_error',
+              command: ptyCommand,
+              error: error.message,
+              timestamp: new Date().toISOString()
+            }));
+          }
+          break;
+          
+        case 'pty_input_local':
+          // Enviar entrada a sesión PTY desde cliente local
+          const inputSession = activeSessions.get(message.sessionId);
+          if (inputSession) {
+            try {
+              inputSession.pty.write(message.data);
+              localWs.send(JSON.stringify({
+                type: 'pty_input_sent',
+                sessionId: message.sessionId,
+                success: true,
+                timestamp: new Date().toISOString()
+              }));
+            } catch (error) {
+              localWs.send(JSON.stringify({
+                type: 'pty_input_error',
+                sessionId: message.sessionId,
+                error: error.message,
+                timestamp: new Date().toISOString()
+              }));
+            }
+          } else {
+            localWs.send(JSON.stringify({
+              type: 'pty_session_not_found',
+              sessionId: message.sessionId,
+              timestamp: new Date().toISOString()
+            }));
+          }
+          break;
+          
+        case 'pty_list_local':
+          // Listar sesiones PTY activas
+          const ptySessions = Array.from(activeSessions.entries()).map(([id, session]) => ({
+            sessionId: id,
+            requestId: session.requestId,
+            command: session.command,
+            createdAt: session.createdAt,
+            uptime: Date.now() - session.createdAt,
+            outputLength: session.output.length
+          }));
+          
+          localWs.send(JSON.stringify({
+            type: 'pty_sessions_list',
+            sessions: ptySessions,
+            total: ptySessions.length,
+            timestamp: new Date().toISOString()
+          }));
           break;
           
         case 'forward_to_coordinator':
@@ -829,8 +1379,17 @@ app.get('/status', (req, res) => {
       system_commands: true,
       file_extraction: true,
       heartbeat: true,
+      pty_terminal: true,
+      interactive_commands: true,
       max_command_timeout: 30000, // 30 segundos
-      max_output_buffer: 1048576  // 1MB
+      max_output_buffer: 1048576,  // 1MB
+      max_pty_sessions: 10,
+      pty_session_timeout: 3600000 // 1 hora
+    },
+    pty_info: {
+      active_sessions: activeSessions.size,
+      session_counter: sessionCounter,
+      cleanup_interval: '30 minutes'
     }
   });
 });
