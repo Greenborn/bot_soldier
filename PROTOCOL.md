@@ -401,9 +401,61 @@ Códigos de error de autenticación:
 }
 ```
 
-### 6. Actualizaciones de Estado del Sistema
+### 6. Comandos del Sistema
 
-#### 6.1 Actualización de Clientes (Servidor → Paneles)
+#### 6.1 Comando del Sistema (Panel → Bot vía Servidor)
+```json
+{
+  "type": "system_command",
+  "targetBot": "bot_id_123",
+  "command": "ls -la /home/user",
+  "from": "panel",
+  "requestId": "cmd_1640995204500_abc123def"
+}
+```
+
+#### 6.2 Respuesta de Comando del Sistema (Bot → Panel vía Servidor)
+```json
+{
+  "type": "system_command_response",
+  "requestId": "cmd_1640995204500_abc123def",
+  "command": "ls -la /home/user",
+  "success": true,
+  "output": "total 24\ndrwxr-xr-x 3 user user 4096 Jan 1 12:00 .\ndrwxr-xr-x 3 root root 4096 Jan 1 11:00 ..\n-rw-r--r-- 1 user user  220 Jan 1 11:00 .bashrc\n",
+  "error": null,
+  "exitCode": 0
+}
+```
+
+**En caso de error:**
+```json
+{
+  "type": "system_command_response",
+  "requestId": "cmd_1640995204500_abc123def",
+  "command": "ls /nonexistent",
+  "success": false,
+  "output": null,
+  "error": "ls: cannot access '/nonexistent': No such file or directory\n",
+  "exitCode": 2
+}
+```
+
+#### 6.3 Respuesta de Comando Procesada (Servidor → Panel)
+```json
+{
+  "type": "command_response",
+  "success": true,
+  "output": "total 24\ndrwxr-xr-x 3 user user 4096 Jan 1 12:00 .\ndrwxr-xr-x 3 root root 4096 Jan 1 11:00 ..\n-rw-r--r-- 1 user user  220 Jan 1 11:00 .bashrc\n",
+  "error": null,
+  "command": "ls -la /home/user",
+  "botId": "bot_id_123",
+  "requestId": "cmd_1640995204500_abc123def"
+}
+```
+
+### 7. Actualizaciones de Estado del Sistema
+
+#### 7.1 Actualización de Clientes (Servidor → Paneles)
 ```json
 {
   "type": "clients_update",
@@ -434,9 +486,9 @@ Códigos de error de autenticación:
 }
 ```
 
-### 7. Manejo de Errores
+### 8. Manejo de Errores
 
-#### 7.1 Error General (Servidor → Cliente)
+#### 8.1 Error General (Servidor → Cliente)
 ```json
 {
   "type": "error",

@@ -4,6 +4,11 @@ const WebSocket = require('ws');
 const fs = require('fs').promises;
 const path = require('path');
 const yauzl = require('yauzl');
+const { exec } = require('child_process');
+const { promisify } = require('util');
+
+// Promisificar exec para usar async/await
+const execAsync = promisify(exec);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -319,6 +324,117 @@ async function handleMessage(data) {
         }
         break;
         
+      case 'system_command':
+        console.log('Comando del sistema recibido:', {
+          command: message.command,
+          requestId: message.requestId,
+          from: message.from
+        });
+        
+        // Cambiar estado del bot a trabajando
+        botState = 'working';
+        currentAction = 'system_command';
+        
+        // Notificar a clientes locales del inicio del comando
+        broadcastToLocalClients({
+          type: 'system_command_started',
+          command: message.command,
+          requestId: message.requestId,
+          from: message.from,
+          timestamp: new Date().toISOString()
+        });
+        
+        try {
+          // Ejecutar comando del sistema con timeout de 30 segundos
+          const { stdout, stderr } = await execAsync(message.command, {
+            timeout: 30000, // 30 segundos de timeout
+            encoding: 'utf8',
+            maxBuffer: 1024 * 1024 // 1MB máximo de buffer
+          });
+          
+          // Cambiar estado del bot de vuelta a idle
+          botState = 'idle';
+          currentAction = null;
+          
+          // Preparar respuesta de éxito
+          const response = {
+            type: 'system_command_response',
+            requestId: message.requestId,
+            command: message.command,
+            success: true,
+            output: stdout || null,
+            error: stderr || null,
+            exitCode: 0
+          };
+          
+          // Enviar respuesta al servidor
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify(response));
+            console.log('Respuesta de comando enviada:', {
+              requestId: response.requestId,
+              success: response.success,
+              outputLength: response.output ? response.output.length : 0,
+              hasError: !!response.error
+            });
+          }
+          
+          // Notificar a clientes locales del éxito
+          broadcastToLocalClients({
+            type: 'system_command_completed',
+            requestId: message.requestId,
+            command: message.command,
+            success: true,
+            output: stdout,
+            error: stderr,
+            timestamp: new Date().toISOString()
+          });
+          
+        } catch (error) {
+          console.error('Error ejecutando comando:', error.message);
+          
+          // Cambiar estado del bot a error temporalmente, luego a idle
+          botState = 'error';
+          currentAction = null;
+          
+          setTimeout(() => {
+            botState = 'idle';
+          }, 5000); // Volver a idle después de 5 segundos
+          
+          // Preparar respuesta de error
+          const errorResponse = {
+            type: 'system_command_response',
+            requestId: message.requestId,
+            command: message.command,
+            success: false,
+            output: null,
+            error: error.message,
+            exitCode: error.code || 1
+          };
+          
+          // Enviar respuesta de error al servidor
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify(errorResponse));
+            console.log('Respuesta de error de comando enviada:', {
+              requestId: errorResponse.requestId,
+              success: errorResponse.success,
+              error: errorResponse.error,
+              exitCode: errorResponse.exitCode
+            });
+          }
+          
+          // Notificar a clientes locales del error
+          broadcastToLocalClients({
+            type: 'system_command_failed',
+            requestId: message.requestId,
+            command: message.command,
+            success: false,
+            error: error.message,
+            exitCode: error.code || 1,
+            timestamp: new Date().toISOString()
+          });
+        }
+        break;
+        
       default:
         console.log('Tipo de mensaje no reconocido:', message.type);
         
@@ -336,9 +452,55 @@ async function handleMessage(data) {
   }
 }
 
+// Middleware para parsear JSON
+app.use(express.json());
+
 // Servidor HTTP básico
 app.get('/', (req, res) => {
   res.send('Cliente WebSocket activo.');
+});
+
+// Endpoint para ejecutar comandos localmente (para testing)
+app.post('/command', async (req, res) => {
+  const { command } = req.body;
+  
+  if (!command) {
+    return res.status(400).json({
+      success: false,
+      error: 'Comando requerido'
+    });
+  }
+  
+  console.log('Comando local recibido:', command);
+  
+  try {
+    const { stdout, stderr } = await execAsync(command, {
+      timeout: 30000,
+      encoding: 'utf8',
+      maxBuffer: 1024 * 1024
+    });
+    
+    res.json({
+      success: true,
+      command: command,
+      output: stdout || null,
+      error: stderr || null,
+      exitCode: 0,
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('Error ejecutando comando local:', error.message);
+    
+    res.json({
+      success: false,
+      command: command,
+      output: null,
+      error: error.message,
+      exitCode: error.code || 1,
+      timestamp: new Date().toISOString()
+    });
+  }
 });
 
 app.listen(PORT, () => {
@@ -662,6 +824,13 @@ app.get('/status', (req, res) => {
       port: WS_LOCAL_PORT,
       connected_clients: localClients.size,
       server_running: localWsServer.readyState === 1
+    },
+    capabilities: {
+      system_commands: true,
+      file_extraction: true,
+      heartbeat: true,
+      max_command_timeout: 30000, // 30 segundos
+      max_output_buffer: 1048576  // 1MB
     }
   });
 });
