@@ -53,10 +53,12 @@ async function extractZipFromBase64(base64Data, filename, extractTo = '') {
     // Decodificar base64
     const zipBuffer = Buffer.from(base64Data, 'base64');
     
-    // Crear directorio de destino
-    const targetDir = path.join(DOWNLOADS_DIR, extractTo);
+    // Obtener nombre base del archivo sin extensión
+    const baseName = filename.replace(/\.[^.]+$/, '');
+    // Crear subdirectorio con el nombre del archivo (sin extensión)
+    const targetDir = path.join(DOWNLOADS_DIR, extractTo, baseName);
     await fs.mkdir(targetDir, { recursive: true });
-    
+
     // Escribir archivo ZIP temporal
     const tempZipPath = path.join(targetDir, `temp_${filename}`);
     await fs.writeFile(tempZipPath, zipBuffer);
