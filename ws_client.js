@@ -357,7 +357,7 @@ async function handleMessage(data) {
         });
         break;
         
-      case 'unzip':
+      case 'receive_zip':
         console.log('Comando de extracción recibido:', {
           filename: message.filename,
           extractTo: message.extractTo || 'raiz'
@@ -365,7 +365,7 @@ async function handleMessage(data) {
         
         // Cambiar estado del bot a trabajando
         botState = 'working';
-        currentAction = 'unzip';
+        currentAction = 'receive_zip';
         
         // Notificar a clientes locales del inicio de extracción
         broadcastToLocalClients({
@@ -388,7 +388,7 @@ async function handleMessage(data) {
           
           // Enviar respuesta de éxito
           const response = {
-            type: 'unzip_result',
+            type: 'receive_zip_result',
             ...result
           };
           
@@ -420,7 +420,7 @@ async function handleMessage(data) {
           
           // Enviar respuesta de error
           const errorResponse = {
-            type: 'unzip_result',
+            type: 'receive_zip_result',
             success: false,
             error: error.message,
             message: 'Error al extraer el archivo'
