@@ -1,11 +1,15 @@
 {
   "name": "bot-soldier",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Bot Soldier - WebSocket Client con funcionalidades de extracción de archivos",
   "main": "ws_client.js",
   "scripts": {
     "start": "node ws_client.js",
-    "dev": "nodemon ws_client.js"
+    "dev": "nodemon ws_client.js",
+    "test": "node tests/test_auto.js",
+    "test:interactive": "node tests/test_generic_messaging.js",
+    "test:auto": "node tests/test_auto.js",
+    "verify": "node tests/verify_connection.js"
   },
   "dependencies": {
     "dotenv": "^17.2.1",
