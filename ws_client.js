@@ -377,7 +377,7 @@ async function handleMessage(data) {
         
         try {
           const result = await extractZipFromBase64(
-            message.base64,
+            message.data,
             message.filename,
             message.extractTo || ''
           );
