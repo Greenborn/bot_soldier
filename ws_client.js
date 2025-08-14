@@ -781,6 +781,22 @@ async function handleMessage(data) {
         
         // Si espera respuesta, enviar confirmación
         if (message.expectResponse) {
+          // Obtener espacio libre en disco (Linux, usando df)
+          let diskFree = null;
+          try {
+            const { execSync } = require('child_process');
+            const dfOut = execSync('df -k /').toString();
+            const lines = dfOut.split('\n');
+            if (lines.length > 1) {
+              const parts = lines[1].split(/\s+/);
+              if (parts.length >= 4) {
+                diskFree = parseInt(parts[3], 10) * 1024; // en bytes
+              }
+            }
+          } catch (e) {
+            diskFree = null;
+          }
+
           const response = {
             type: 'generic_message_response',
             requestId: message.requestId,
@@ -788,7 +804,13 @@ async function handleMessage(data) {
             payload: {
               message: 'Mensaje genérico recibido correctamente',
               botStatus: botState,
-              processed: true
+              processed: true,
+              system_metrics: {
+                cpu: Math.round(Math.random() * 100), // Placeholder
+                memory: Math.round(Math.random() * 100), // Placeholder
+                disk: Math.round(Math.random() * 100), // Placeholder
+                diskFree: diskFree !== null ? diskFree : 'N/A'
+              }
             },
             timestamp: Date.now()
           };
@@ -1764,6 +1786,22 @@ let actionsQueued = 0;
 function sendHeartbeat() {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   
+  // Obtener espacio libre en disco (Linux, usando df)
+  let diskFree = null;
+  try {
+    const { execSync } = require('child_process');
+    const dfOut = execSync('df -k /').toString();
+    const lines = dfOut.split('\n');
+    if (lines.length > 1) {
+      const parts = lines[1].split(/\s+/);
+      if (parts.length >= 4) {
+        diskFree = parseInt(parts[3], 10) * 1024; // en bytes
+      }
+    }
+  } catch (e) {
+    diskFree = null;
+  }
+
   const heartbeatMessage = {
     type: 'heartbeat',
     timestamp: Date.now(),
@@ -1774,6 +1812,7 @@ function sendHeartbeat() {
       systemInfo: {
         cpu: Math.round(Math.random() * 100), // Placeholder - aquí iría el uso real de CPU
         memory: Math.round(Math.random() * 100), // Placeholder - aquí iría el uso real de memoria
+        diskFree: diskFree, // espacio libre en disco en bytes
         uptime: process.uptime() * 1000 // tiempo activo en ms
       }
     }

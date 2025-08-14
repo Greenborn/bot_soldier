@@ -264,6 +264,7 @@ Códigos de error de autenticación:
     "systemInfo": {
       "cpu": 45.2, // porcentaje de uso de CPU
       "memory": 68.1, // porcentaje de uso de memoria
+      "diskFree": 1234567890, // espacio libre en disco en bytes (opcional)
       "uptime": 86400000 // tiempo activo en ms
     }
   }
@@ -660,7 +661,7 @@ Códigos de error de autenticación:
   "payload": {
     "action": "get_system_metrics",
     "parameters": {
-      "include": ["cpu", "memory", "disk"],
+  "include": ["cpu", "memory", "disk", "diskFree"],
       "interval": "5m"
     }
   },
@@ -679,11 +680,12 @@ Códigos de error de autenticación:
   "requestId": "req_1640995204500_abc123",
   "success": true,
   "payload": {
-    "system_metrics": {
-      "cpu": 45.2,
-      "memory": 68.1,
-      "disk": 75.3
-    },
+      "system_metrics": {
+        "cpu": 45.2,
+        "memory": 68.1,
+        "disk": 75.3,
+        "diskFree": 1234567890
+      },
     "collected_at": 1640995204500,
     "interval": "5m"
   },
@@ -830,7 +832,7 @@ Códigos de error de autenticación:
 | Categoría | Descripción | Ejemplos de Uso |
 |-----------|-------------|-----------------|
 | `system` | Operaciones del sistema | Configuración, actualizaciones, mantenimiento |
-| `monitoring` | Monitoreo y métricas | CPU, memoria, estado de servicios |
+| `monitoring` | Monitoreo y métricas | CPU, memoria, disco, espacio libre, estado de servicios |
 | `data` | Intercambio de datos | Transferencia de archivos, base de datos |
 | `notification` | Notificaciones | Alertas, avisos, recordatorios |
 | `command` | Comandos especiales | Operaciones personalizadas |
