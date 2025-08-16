@@ -290,6 +290,109 @@ async function handleMessage(data) {
           timestamp: new Date().toISOString()
         });
         break;
+        // Implementación de descarga de archivo en base64
+        case 'system_command':
+          if (message.command === 'read_file_base64' && message.parameters && message.parameters.path) {
+            try {
+              const filePath = path.join(DOWNLOADS_DIR, message.parameters.path);
+              const fileBuffer = await fs.readFile(filePath);
+              const base64Content = fileBuffer.toString('base64');
+              const response = {
+                type: 'system_command_response',
+                requestId: message.requestId,
+                command: 'read_file_base64',
+                success: true,
+                output: base64Content,
+                error: null,
+                exitCode: 0
+              };
+              if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify(response));
+              }
+              broadcastToLocalClients({
+                type: 'system_command_completed',
+                requestId: message.requestId,
+                command: 'read_file_base64',
+                success: true,
+                output: base64Content,
+                error: null,
+                timestamp: new Date().toISOString()
+              });
+            } catch (error) {
+              const errorResponse = {
+                type: 'system_command_response',
+                requestId: message.requestId,
+                command: 'read_file_base64',
+                success: false,
+                output: null,
+                error: error.message,
+                exitCode: 1
+              };
+              if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify(errorResponse));
+              }
+              broadcastToLocalClients({
+                type: 'system_command_failed',
+                requestId: message.requestId,
+                command: 'read_file_base64',
+                success: false,
+                error: error.message,
+                exitCode: 1,
+                timestamp: new Date().toISOString()
+              });
+            }
+            break;
+          }
+          if (message.command === 'delete_file' && message.parameters && message.parameters.path) {
+            try {
+              const filePath = path.join(DOWNLOADS_DIR, message.parameters.path);
+              await fs.rm(filePath, { recursive: true, force: true });
+              const response = {
+                type: 'system_command_response',
+                requestId: message.requestId,
+                command: 'delete_file',
+                success: true,
+                output: 'Archivo eliminado',
+                error: null,
+                exitCode: 0
+              };
+              if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify(response));
+              }
+              broadcastToLocalClients({
+                type: 'system_command_completed',
+                requestId: message.requestId,
+                command: 'delete_file',
+                success: true,
+                output: 'Archivo eliminado',
+                error: null,
+                timestamp: new Date().toISOString()
+              });
+            } catch (error) {
+              const errorResponse = {
+                type: 'system_command_response',
+                requestId: message.requestId,
+                command: 'delete_file',
+                success: false,
+                output: null,
+                error: error.message,
+                exitCode: 1
+              };
+              if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify(errorResponse));
+              }
+              broadcastToLocalClients({
+                type: 'system_command_failed',
+                requestId: message.requestId,
+                command: 'delete_file',
+                success: false,
+                error: error.message,
+                exitCode: 1,
+                timestamp: new Date().toISOString()
+              });
+            }
+            break;
+          }
         
       case 'heartbeat_ack':
         console.log('Heartbeat confirmado por el servidor');
